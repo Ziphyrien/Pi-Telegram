@@ -8,11 +8,22 @@ export interface BotConfig {
   streamByChat?: Record<string, boolean>;
 }
 
+export interface CronConfig {
+  enabled?: boolean;
+  defaultTimezone?: string;
+  maxJobsPerChat?: number;
+  maxRunSeconds?: number;
+  maxLatenessMs?: number;
+  retryMax?: number;
+  retryBackoffMs?: number;
+}
+
 export interface AppConfig {
   bots: BotConfig[];
   idleTimeoutMs: number;
   maxResponseLength: number;
   lastChangelogVersion?: string;
+  cron?: CronConfig;
 }
 
 export interface PiImage {

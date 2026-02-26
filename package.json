@@ -26,6 +26,7 @@
     "@grammyjs/runner": "^2.0.3",
     "@mariozechner/pi-coding-agent": "^0.55.0",
     "@types/markdown-it": "^14.1.2",
+    "croner": "^9.1.0",
     "@types/sanitize-html": "^2.16.0",
     "grammy": "^1.35.0",
     "markdown-it": "^14.1.1",

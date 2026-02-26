@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import { PiPool } from "./pool.js";
 import { createBot } from "./bot.js";
+import { CronService } from "./cron-service.js";
 import { log } from "./log.js";
 import { getRegisteredToolSystemPrompt } from "./tools.js";
 import {
@@ -15,13 +16,15 @@ import {
   getUpdateInstruction,
   shouldCheckUpdatesOnStartup,
 } from "./version.js";
-import type { AppConfig } from "./types.js";
+import type { AppConfig, CronConfig } from "./types.js";
 
 const telegramRoot = resolve(homedir(), ".pi", "telegram");
 const settingsPath = resolve(telegramRoot, "settings.json");
 const sessionsRoot = resolve(telegramRoot, "sessions");
+const cronRoot = resolve(telegramRoot, "cron");
 
 mkdirSync(sessionsRoot, { recursive: true });
+mkdirSync(cronRoot, { recursive: true });
 
 const defaultWorkspace = resolve(telegramRoot, "workspace");
 mkdirSync(defaultWorkspace, { recursive: true });
@@ -44,6 +47,15 @@ if (!existsSync(settingsPath)) {
     idleTimeoutMs: 600000,
     maxResponseLength: 4000,
     lastChangelogVersion: appVersion,
+    cron: {
+      enabled: true,
+      defaultTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      maxJobsPerChat: 20,
+      maxRunSeconds: 900,
+      maxLatenessMs: 10 * 60 * 1000,
+      retryMax: 2,
+      retryBackoffMs: 30 * 1000,
+    },
   };
 
   writeFileSync(settingsPath, `${JSON.stringify(template, null, 2)}\n`, "utf-8");
@@ -79,6 +91,76 @@ if (shouldCheckUpdatesOnStartup()) {
     log.warn(`发现新版本 ${newVersion} 可用。${getUpdateInstruction(packageName)}`);
     log.warn("Changelog: https://github.com/Ziphyrien/Pi-Telegram/blob/main/CHANGELOG.md");
   });
+}
+
+const defaultCronConfig: Required<CronConfig> = {
+  enabled: true,
+  defaultTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  maxJobsPerChat: 20,
+  maxRunSeconds: 900,
+  maxLatenessMs: 10 * 60 * 1000,
+  retryMax: 2,
+  retryBackoffMs: 30 * 1000,
+};
+
+function normalizeCronConfig(input: CronConfig | undefined): { value: Required<CronConfig>; changed: boolean } {
+  const src = input ?? {};
+  let changed = input === undefined;
+
+  const enabled = typeof src.enabled === "boolean" ? src.enabled : defaultCronConfig.enabled;
+  if (enabled !== src.enabled) changed = true;
+
+  const timezone = String(src.defaultTimezone || defaultCronConfig.defaultTimezone).trim() || defaultCronConfig.defaultTimezone;
+  if (timezone !== src.defaultTimezone) changed = true;
+
+  const maxJobsPerChatRaw = Number(src.maxJobsPerChat);
+  const maxJobsPerChat = Number.isFinite(maxJobsPerChatRaw) && maxJobsPerChatRaw >= 1
+    ? Math.floor(maxJobsPerChatRaw)
+    : defaultCronConfig.maxJobsPerChat;
+  if (maxJobsPerChat !== src.maxJobsPerChat) changed = true;
+
+  const maxRunSecondsRaw = Number(src.maxRunSeconds);
+  const maxRunSeconds = Number.isFinite(maxRunSecondsRaw) && maxRunSecondsRaw >= 10
+    ? Math.floor(maxRunSecondsRaw)
+    : defaultCronConfig.maxRunSeconds;
+  if (maxRunSeconds !== src.maxRunSeconds) changed = true;
+
+  const maxLatenessMsRaw = Number(src.maxLatenessMs);
+  const maxLatenessMs = Number.isFinite(maxLatenessMsRaw) && maxLatenessMsRaw >= 0
+    ? Math.floor(maxLatenessMsRaw)
+    : defaultCronConfig.maxLatenessMs;
+  if (maxLatenessMs !== src.maxLatenessMs) changed = true;
+
+  const retryMaxRaw = Number(src.retryMax);
+  const retryMax = Number.isFinite(retryMaxRaw) && retryMaxRaw >= 0
+    ? Math.floor(retryMaxRaw)
+    : defaultCronConfig.retryMax;
+  if (retryMax !== src.retryMax) changed = true;
+
+  const retryBackoffMsRaw = Number(src.retryBackoffMs);
+  const retryBackoffMs = Number.isFinite(retryBackoffMsRaw) && retryBackoffMsRaw >= 1000
+    ? Math.floor(retryBackoffMsRaw)
+    : defaultCronConfig.retryBackoffMs;
+  if (retryBackoffMs !== src.retryBackoffMs) changed = true;
+
+  return {
+    changed,
+    value: {
+      enabled,
+      defaultTimezone: timezone,
+      maxJobsPerChat,
+      maxRunSeconds,
+      maxLatenessMs,
+      retryMax,
+      retryBackoffMs,
+    },
+  };
+}
+
+const normalizedCron = normalizeCronConfig(config.cron);
+config.cron = normalizedCron.value;
+if (normalizedCron.changed) {
+  needsSettingsRewrite = true;
 }
 
 let settingsWriteQueue: Promise<void> = Promise.resolve();
@@ -151,6 +233,7 @@ const toolSystemPromptArg = toolSystemPrompt ? toolSystemPromptFile : "";
 
 const bots: Array<{ stop: () => Promise<void> }> = [];
 const pools: PiPool[] = [];
+const cronServices: CronService[] = [];
 let shuttingDown = false;
 
 function formatErr(err: unknown): string {
@@ -279,8 +362,9 @@ for (let i = 0; i < config.bots.length; i++) {
   }
 
   const cwd = botCfg.cwd || defaultWorkspace;
+  const botName = botCfg.name || `bot${i}`;
   // Session storage is fixed to ~/.pi/telegram/sessions/<bot-name>/...
-  const sessionBaseDir = resolve(sessionsRoot, botCfg.name || `bot${i}`);
+  const sessionBaseDir = resolve(sessionsRoot, botName);
 
   const pool = new PiPool({
     cwd,
@@ -291,10 +375,28 @@ for (let i = 0; i < config.bots.length; i++) {
   });
   pools.push(pool);
 
+  const cronStorePath = resolve(cronRoot, botName, "jobs.json");
+  const cronCfg = normalizedCron.value;
+  const cron = new CronService({
+    storePath: cronStorePath,
+    botName,
+    enabled: cronCfg.enabled,
+    defaultTimezone: cronCfg.defaultTimezone,
+    maxJobsPerChat: cronCfg.maxJobsPerChat,
+    maxRunMs: cronCfg.maxRunSeconds * 1000,
+    defaultPolicy: {
+      maxLatenessMs: cronCfg.maxLatenessMs,
+      retryMax: cronCfg.retryMax,
+      retryBackoffMs: cronCfg.retryBackoffMs,
+      deleteAfterRun: true,
+    },
+  });
+
   const bot = createBot({
     botIndex: i,
     config: botCfg,
     pool,
+    cron,
     maxResponseLength: config.maxResponseLength || 4000,
     initialStreamByChat: botCfg.streamByChat,
     onStreamModeChange: async (chatId, enabled) => {
@@ -314,9 +416,12 @@ for (let i = 0; i < config.bots.length; i++) {
     },
   });
 
-  const handle = startRunnerWithAutoRestart(bot, botCfg.name || `bot${i}`);
+  await cron.start();
+  cronServices.push(cron);
+
+  const handle = startRunnerWithAutoRestart(bot, botName);
   bots.push(handle);
-  log.boot(`"${botCfg.name}" started`);
+  log.boot(`"${botName}" started`);
 }
 
 if (needsSettingsRewrite) {
@@ -332,6 +437,7 @@ async function shutdown() {
 
   log.shutdown("stopping...");
   for (const bot of bots) await bot.stop();
+  for (const cron of cronServices) await cron.stop();
   for (const pool of pools) await pool.shutdown();
   process.exit(0);
 }

@@ -25,6 +25,8 @@ import {
   resolveReplyParameters,
 } from "./reply-tool.js";
 import type { PiPool } from "./pool.js";
+import type { CronJobRecord, CronSchedule } from "./cron-types.js";
+import type { CronService } from "./cron-service.js";
 import type { BotConfig, PiImage } from "./types.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
@@ -33,6 +35,7 @@ export interface CreateBotOptions {
   botIndex: number;
   config: BotConfig;
   pool: PiPool;
+  cron: CronService;
   maxResponseLength: number;
   initialStreamByChat?: Record<string, boolean>;
   onStreamModeChange?: (chatId: number, enabled: boolean) => Promise<void> | void;
@@ -43,6 +46,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     botIndex,
     config,
     pool,
+    cron,
     maxResponseLength,
     initialStreamByChat,
     onStreamModeChange,
@@ -136,6 +140,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       } catch { /* ignore */ }
     }
 
+    const cronSt = cron.status(chatId);
+
     const lines = [
       `${alive} | ${state}`,
       providerLabel ? `🏢 供应商: ${providerLabel}` : "",
@@ -145,6 +151,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       sessionLabel ? `🗂 会话: ${sessionLabel}` : "",
       costLabel,
       `📊 活跃: ${pool.size}`,
+      `⏰ 定时: ${cronSt.enabled ? "开启" : "关闭"} | 任务 ${cronSt.totalJobs}（启用 ${cronSt.enabledJobs}）`,
     ].filter(Boolean);
 
     await tgCtx.reply(lines.join("\n"));
@@ -200,6 +207,273 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     }
     await menus.ensureThinkingForChat(chatId);
     await tgCtx.reply("🧠 思考程度:", { reply_markup: thinkingMenu });
+  });
+
+  let cronScopeBotId: number | null = null;
+  const getCronReplyScope = async (chatId: number): Promise<string> => {
+    if (cronScopeBotId == null) {
+      const me = await bot.api.getMe();
+      cronScopeBotId = me.id;
+    }
+    return `${cronScopeBotId}:${chatId}`;
+  };
+
+  const sendCronAttachment = async (chatId: number, att: TgAttachment): Promise<void> => {
+    const api = bot.api;
+    const kind = REPLY_BY_KIND[att.kind] || "replyWithDocument";
+
+    try {
+      switch (kind) {
+        case "replyWithPhoto":
+          await api.sendPhoto(chatId, att.media as any);
+          return;
+        case "replyWithDocument":
+          await api.sendDocument(chatId, att.media as any);
+          return;
+        case "replyWithVideo":
+          await api.sendVideo(chatId, att.media as any);
+          return;
+        case "replyWithAudio":
+          await api.sendAudio(chatId, att.media as any);
+          return;
+        case "replyWithAnimation":
+          await api.sendAnimation(chatId, att.media as any);
+          return;
+        case "replyWithVoice":
+          await api.sendVoice(chatId, att.media as any);
+          return;
+        case "replyWithVideoNote":
+          await api.sendVideoNote(chatId, att.media as any);
+          return;
+        case "replyWithSticker":
+          await api.sendSticker(chatId, att.media as any);
+          return;
+        default:
+          await api.sendDocument(chatId, att.media as any);
+      }
+    } catch (err) {
+      if (kind === "replyWithDocument") throw err;
+      await api.sendDocument(chatId, att.media as any);
+    }
+  };
+
+  const sendCronReply = async (chatId: number, text: string, tools: string[]): Promise<void> => {
+    const prepared = prepareCronReply(text, tools);
+    const scope = await getCronReplyScope(chatId);
+
+    if (prepared.warnings.length) {
+      const preview = prepared.warnings.slice(0, 3).join("\n");
+      const more = prepared.warnings.length > 3 ? `\n... 还有 ${prepared.warnings.length - 3} 条` : "";
+      await bot.api.sendMessage(chatId, `⚠️ 附件解析告警：\n${preview}${more}`).catch(() => {});
+    }
+
+    if (prepared.body.trim()) {
+      for (const part of splitMessage(prepared.body, maxResponseLength)) {
+        const html = mdToTgHtml(part);
+        try {
+          const sent = await bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+          rememberReplyMessage(scope, "self", sent.message_id, part);
+        } catch (err) {
+          log.warn(`chat${chatId} 定时任务 HTML 发送失败，降级纯文本：${describeTelegramSendError(err)}`);
+          const plain = mdToPlainText(stripProtocolTags(part));
+          const sent = await bot.api.sendMessage(chatId, plain);
+          rememberReplyMessage(scope, "self", sent.message_id, plain);
+        }
+      }
+    }
+
+    for (const att of prepared.attachments) {
+      try {
+        await sendCronAttachment(chatId, att);
+      } catch (err) {
+        await bot.api.sendMessage(chatId, `❌ 附件发送失败：${att.label || "未知附件"}\n${(err as Error).message}`).catch(() => {});
+      }
+    }
+  };
+
+  cron.setExecutor(async ({ job }) => {
+    const key = chatKey(botKey, job.chatId);
+    const inst = pool.get(key);
+
+    try {
+      const result = await inst.prompt(job.prompt);
+      await sendCronReply(job.chatId, result.text, result.tools);
+      return { ok: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await bot.api.sendMessage(
+        job.chatId,
+        `❌ 定时任务「${job.name || job.id}」执行失败：${truncate(message, 1500)}`,
+      ).catch(() => {});
+      return { ok: false, error: message };
+    }
+  });
+
+  commandGroup.command("cron", "管理定时任务", async (tgCtx) => {
+    try {
+      const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "cron");
+      const args = splitCommandArgs(raw);
+      const sub = (args.shift() || "help").toLowerCase();
+      const chatId = tgCtx.chat.id;
+
+    if (sub === "help" || sub === "h" || sub === "?") {
+      await tgCtx.reply(CRON_HELP_TEXT);
+      return;
+    }
+
+    if (sub === "list" || sub === "ls") {
+      const jobs = cron.list(chatId);
+      if (!jobs.length) {
+        await tgCtx.reply("当前聊天暂无定时任务。使用 /cron add ... 创建。");
+        return;
+      }
+
+      const lines = jobs.map((job) => formatCronJobLine(job));
+      const text = `⏰ 定时任务（${jobs.length}）\n${lines.join("\n")}`;
+      for (const part of splitMessage(text, maxResponseLength)) {
+        await tgCtx.reply(part);
+      }
+      return;
+    }
+
+    if (sub === "stat" || sub === "status") {
+      const st = cron.status(chatId);
+      await tgCtx.reply(formatCronStatus(st));
+      return;
+    }
+
+    if (sub === "add") {
+      const kind = (args.shift() || "").toLowerCase();
+      if (!kind) {
+        await tgCtx.reply("用法：/cron add at|every|cron ...");
+        return;
+      }
+
+      if (kind === "at") {
+        const atRaw = args.shift() || "";
+        const prompt = args.join(" ").trim();
+        if (!atRaw || !prompt) {
+          await tgCtx.reply("用法：/cron add at <ISO时间> <内容>");
+          return;
+        }
+
+        const atMs = new Date(atRaw).getTime();
+        if (!Number.isFinite(atMs)) {
+          await tgCtx.reply("时间格式非法，请使用 ISO 8601，例如 2026-03-01T09:00:00+08:00");
+          return;
+        }
+
+        const job = await cron.create({
+          chatId,
+          prompt,
+          schedule: { kind: "at", atMs },
+        });
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        return;
+      }
+
+      if (kind === "every") {
+        const everyRaw = args.shift() || "";
+        const prompt = args.join(" ").trim();
+        const everyMs = parseDurationMs(everyRaw);
+        if (!everyMs || !prompt) {
+          await tgCtx.reply("用法：/cron add every <间隔> <内容>\n示例：/cron add every 10m 早报总结");
+          return;
+        }
+
+        const job = await cron.create({
+          chatId,
+          prompt,
+          schedule: { kind: "every", everyMs, anchorMs: Date.now() },
+        });
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        return;
+      }
+
+      if (kind === "cron") {
+        const expr = args.shift() || "";
+        if (!expr) {
+          await tgCtx.reply("用法：/cron add cron \"<表达式>\" [时区] <内容>");
+          return;
+        }
+
+        let timezone = cron.getDefaultTimezone();
+        if (args.length >= 2 && looksLikeTimezone(args[0])) {
+          timezone = args.shift()!;
+        }
+
+        const prompt = args.join(" ").trim();
+        if (!prompt) {
+          await tgCtx.reply("用法：/cron add cron \"<表达式>\" [时区] <内容>");
+          return;
+        }
+
+        const job = await cron.create({
+          chatId,
+          prompt,
+          schedule: { kind: "cron", expr, timezone },
+        });
+
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        return;
+      }
+
+      await tgCtx.reply("不支持的类型，仅支持 at / every / cron");
+      return;
+    }
+
+    if (sub === "on" || sub === "off") {
+      const id = (args.shift() || "").trim();
+      if (!id) {
+        await tgCtx.reply("用法：/cron on <id> 或 /cron off <id>");
+        return;
+      }
+      const updated = await cron.setEnabled(id, sub === "on");
+      if (!updated || updated.chatId !== chatId) {
+        await tgCtx.reply("未找到该任务（或不属于当前聊天）");
+        return;
+      }
+      await tgCtx.reply(`✅ 任务 ${id} 已${sub === "on" ? "启用" : "停用"}`);
+      return;
+    }
+
+    if (sub === "del" || sub === "rm" || sub === "remove") {
+      const id = (args.shift() || "").trim();
+      if (!id) {
+        await tgCtx.reply("用法：/cron del <id>");
+        return;
+      }
+      const job = cron.get(id);
+      if (!job || job.chatId !== chatId) {
+        await tgCtx.reply("未找到该任务（或不属于当前聊天）");
+        return;
+      }
+      await cron.remove(id);
+      await tgCtx.reply(`🗑 已删除任务 ${id}`);
+      return;
+    }
+
+    if (sub === "run") {
+      const id = (args.shift() || "").trim();
+      if (!id) {
+        await tgCtx.reply("用法：/cron run <id>");
+        return;
+      }
+      const job = cron.get(id);
+      if (!job || job.chatId !== chatId) {
+        await tgCtx.reply("未找到该任务（或不属于当前聊天）");
+        return;
+      }
+      const ok = await cron.runNow(id);
+      await tgCtx.reply(ok ? `▶️ 任务 ${id} 已加入执行队列` : "加入队列失败");
+      return;
+    }
+
+      await tgCtx.reply("未知子命令。发送 /cron help 查看用法。");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await tgCtx.reply(`❌ cron 操作失败：${truncate(message, 1000)}`).catch(() => {});
+    }
   });
 
   type PromptPayload = { message: string; images?: PiImage[] };
@@ -888,6 +1162,32 @@ interface PreparedReply {
   replyParameters?: ReplyParameters;
 }
 
+interface CronPreparedReply {
+  body: string;
+  attachments: TgAttachment[];
+  warnings: string[];
+}
+
+function prepareCronReply(text: string, tools: string[]): CronPreparedReply {
+  const extractedReply = extractTgReplyDirective(text || "");
+  const extracted = extractTgAttachments(extractedReply.text);
+  let body = stripProtocolTags(extracted.text);
+
+  if (tools.length) {
+    body = `${tools.join("\n")}${body ? `\n\n${body}` : ""}`;
+  }
+
+  if (!body.trim() && extracted.attachments.length === 0) {
+    body = "(无回复)";
+  }
+
+  return {
+    body,
+    attachments: extracted.attachments,
+    warnings: [...extractedReply.warnings, ...extracted.warnings],
+  };
+}
+
 function prepareReply(tgCtx: BotContext, text: string, tools: string[]): PreparedReply {
   const extractedReply = extractTgReplyDirective(text || "");
   const extracted = extractTgAttachments(extractedReply.text);
@@ -1077,4 +1377,131 @@ async function sendReply(
 ): Promise<void> {
   const prepared = prepareReply(tgCtx, text, tools);
   await sendPreparedReply(tgCtx, prepared, maxLen);
+}
+
+const CRON_HELP_TEXT = [
+  "⏰ /cron 用法",
+  "- /cron list",
+  "- /cron stat",
+  "- /cron add at <ISO时间> <内容>",
+  "- /cron add every <间隔> <内容>（如 10m、2h、1d）",
+  "- /cron add cron \"<表达式>\" [时区] <内容>",
+  "- /cron on <id>",
+  "- /cron off <id>",
+  "- /cron del <id>",
+  "- /cron run <id>",
+].join("\n");
+
+function extractCommandArgs(text: string, command: string): string {
+  const re = new RegExp(`^\\/${command}(?:@\\w+)?\\s*`, "i");
+  return text.replace(re, "").trim();
+}
+
+function splitCommandArgs(input: string): string[] {
+  if (!input.trim()) return [];
+  const out: string[] = [];
+  const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    const token = m[1] ?? m[2] ?? m[3] ?? "";
+    out.push(token.replace(/\\(["'\\])/g, "$1"));
+  }
+  return out;
+}
+
+function parseDurationMs(input: string): number | undefined {
+  const s = String(input || "").trim().toLowerCase();
+  if (!s) return undefined;
+
+  const re = /(\d+)\s*(d|h|m|s)/g;
+  let total = 0;
+  let matched = "";
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(s)) !== null) {
+    const n = Number.parseInt(m[1], 10);
+    if (!Number.isFinite(n) || n < 0) return undefined;
+
+    switch (m[2]) {
+      case "d": total += n * 24 * 60 * 60 * 1000; break;
+      case "h": total += n * 60 * 60 * 1000; break;
+      case "m": total += n * 60 * 1000; break;
+      case "s": total += n * 1000; break;
+      default: return undefined;
+    }
+
+    matched += m[0];
+  }
+
+  const compactInput = s.replace(/\s+/g, "");
+  const compactMatched = matched.replace(/\s+/g, "");
+  if (!compactMatched || compactMatched !== compactInput) return undefined;
+  if (total < 1000) return undefined;
+  return total;
+}
+
+function looksLikeTimezone(input: string): boolean {
+  const s = String(input || "").trim();
+  if (!s) return false;
+  if (s === "UTC" || s === "GMT") return true;
+  if (/^(UTC|GMT)[+-]\d{1,2}$/.test(s)) return true;
+  return /^[A-Za-z_]+\/[A-Za-z0-9_+-]+(?:\/[A-Za-z0-9_+-]+)?$/.test(s);
+}
+
+function formatDateTime(ms?: number): string {
+  if (!ms || ms <= 0) return "-";
+  return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatCompactDuration(ms: number): string {
+  const totalSec = Math.max(1, Math.floor(ms / 1000));
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (mins) parts.push(`${mins}m`);
+  if (secs || !parts.length) parts.push(`${secs}s`);
+  return parts.join("");
+}
+
+function formatCronSchedule(schedule: CronSchedule): string {
+  switch (schedule.kind) {
+    case "at":
+      return `at ${formatDateTime(schedule.atMs)}`;
+    case "every":
+      return `every ${formatCompactDuration(schedule.everyMs)}（anchor=${formatDateTime(schedule.anchorMs)}）`;
+    case "cron":
+      return `cron "${schedule.expr}" @${schedule.timezone}`;
+    default:
+      return "unknown";
+  }
+}
+
+function formatCronJobLine(job: CronJobRecord): string {
+  const status = job.enabled ? "🟢" : "⚪";
+  const running = job.state.runningRunId ? " ⏳running" : "";
+  const lastStatus = job.state.lastStatus ? ` | last=${job.state.lastStatus}` : "";
+  const lastErr = job.state.lastError ? ` | err=${truncate(job.state.lastError, 40)}` : "";
+
+  return [
+    `${status} ${job.id}${running}`,
+    `  ${truncate(job.name, 70)}`,
+    `  ${formatCronSchedule(job.schedule)}`,
+    `  next=${formatDateTime(job.state.nextRunAtMs)}${lastStatus}${lastErr}`,
+  ].join("\n");
+}
+
+function formatCronStatus(st: { enabled: boolean; totalJobs: number; enabledJobs: number; runningJobs: number; queuedJobs: number; nextRunAtMs?: number }): string {
+  return [
+    `⏰ 定时服务：${st.enabled ? "开启" : "关闭"}`,
+    `总任务：${st.totalJobs}`,
+    `启用：${st.enabledJobs}`,
+    `运行中：${st.runningJobs}`,
+    `队列中：${st.queuedJobs}`,
+    `最近下次触发：${formatDateTime(st.nextRunAtMs)}`,
+  ].join("\n");
 }
