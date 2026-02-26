@@ -160,7 +160,7 @@ export class CronService {
         id,
         botName: this.opts.botName,
         chatId,
-        name: String(input.name || "").trim() || `任务-${id}`,
+        name: normalizeJobName(input.name, prompt, id),
         prompt,
         enabled: input.enabled ?? true,
         createdAtMs: now,
@@ -215,6 +215,18 @@ export class CronService {
         this.scheduleJobUnsafe(job, false);
       }
 
+      await this.persistUnsafe();
+      return cloneJob(job);
+    });
+  }
+
+  async rename(jobId: string, name: string): Promise<CronJobRecord | undefined> {
+    return this.runExclusive(async () => {
+      const job = this.jobs.get(jobId);
+      if (!job) return undefined;
+
+      job.name = normalizeJobName(name, job.prompt, job.id);
+      job.updatedAtMs = Date.now();
       await this.persistUnsafe();
       return cloneJob(job);
     });
@@ -790,8 +802,8 @@ function normalizeLoadedJob(
     id,
     botName: String(rec.botName || botName),
     chatId,
-    name: String(rec.name || `任务-${id}`).trim() || `任务-${id}`,
     prompt: String(rec.prompt || "").trim(),
+    name: normalizeJobName(rec.name, String(rec.prompt || ""), id),
     enabled: rec.enabled !== false,
     createdAtMs: Number.isFinite(createdAtMsRaw) && createdAtMsRaw > 0 ? Math.floor(createdAtMsRaw) : now,
     updatedAtMs: Number.isFinite(updatedAtMsRaw) && updatedAtMsRaw > 0 ? Math.floor(updatedAtMsRaw) : now,
@@ -818,6 +830,37 @@ function normalizeLoadedJob(
         : 0,
     },
   };
+}
+
+function normalizeJobName(nameInput: unknown, prompt: string, id: string): string {
+  const raw = String(nameInput ?? "").trim();
+  const source = raw || deriveNameFromPrompt(prompt, id);
+
+  const normalized = source
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (!normalized) return `任务-${id}`;
+  if (normalized.length <= 48) return normalized;
+  return `${normalized.slice(0, 48)}…`;
+}
+
+function deriveNameFromPrompt(prompt: string, id: string): string {
+  const p = String(prompt || "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (!p) return `任务-${id}`;
+
+  const keyword = p
+    .replace(/^(["'“”‘’\-•\s]+)/, "")
+    .trim();
+
+  if (!keyword) return `任务-${id}`;
+  if (keyword.length <= 24) return keyword;
+  return `${keyword.slice(0, 24)}…`;
 }
 
 function normalizeLastStatus(v: unknown): "ok" | "error" | "missed" | undefined {

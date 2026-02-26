@@ -59,9 +59,30 @@ const telegramReplyTool: AiToolDefinition = {
   ].join("\n"),
 };
 
+const telegramCronTool: AiToolDefinition = {
+  name: "tg-cron",
+  instructions: [
+    "当你需要管理 Telegram 聊天内的定时任务时，输出 <tg-cron ... /> 标签。",
+    "支持 action: add | list | stat | on | off | del | run | rename。",
+    "add 需要 kind: at | every | cron。",
+    "add(kind=at) 必填 at（ISO 时间）和 prompt（任务内容，可放在标签体）。",
+    "add(kind=every) 必填 every（如 10m/2h/1d）和 prompt。",
+    "add(kind=cron) 必填 expr（cron 表达式）和 prompt，可选 timezone。",
+    "on/off/del/run 需要 id。",
+    "rename 需要 id 和 name（或标签体作为名称）。",
+    "不要把标签包在 markdown 代码块里。",
+    "示例1：<tg-cron action=\"add\" kind=\"every\" every=\"30m\" prompt=\"检查报警并总结\" />",
+    "示例2：<tg-cron action=\"add\" kind=\"cron\" expr=\"0 9 * * 1-5\" timezone=\"Asia/Shanghai\" prompt=\"工作日早报\" />",
+    "示例3：<tg-cron action=\"list\" />",
+    "示例4：<tg-cron action=\"off\" id=\"abcd1234\" />",
+    "示例5：<tg-cron action=\"rename\" id=\"abcd1234\" name=\"工作日早报\" />",
+  ].join("\n"),
+};
+
 const defaultRegistry = new AiToolRegistry()
   .register(telegramReplyTool)
-  .register(telegramAttachmentTool);
+  .register(telegramAttachmentTool)
+  .register(telegramCronTool);
 
 export function getRegisteredToolSystemPrompt(): string {
   return defaultRegistry.renderInstructions();

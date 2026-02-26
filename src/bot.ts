@@ -9,6 +9,7 @@ import type { ReplyParameters } from "@grammyjs/types";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { hydrate, type HydrateFlavor } from "@grammyjs/hydrate";
 import { CommandGroup } from "@grammyjs/commands";
+import { Menu } from "@grammyjs/menu";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import { log } from "./log.js";
 import { mdToPlainText, mdToTgHtml } from "./md2tg.js";
@@ -24,6 +25,10 @@ import {
   rememberReplyMessage,
   resolveReplyParameters,
 } from "./reply-tool.js";
+import {
+  extractTgCronDirectives,
+  type TgCronDirective,
+} from "./cron-tool.js";
 import type { PiPool } from "./pool.js";
 import type { CronJobRecord, CronSchedule } from "./cron-types.js";
 import type { CronService } from "./cron-service.js";
@@ -309,12 +314,181 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     }
   });
 
+  type CronPendingInput =
+    | { kind: "at" | "every" | "cron"; startedAt: number }
+    | { kind: "rename"; jobId: string; startedAt: number };
+  const cronPendingInput = new Map<number, CronPendingInput>();
+  const cronRootMenuId = `cron-menu-${botIndex}`;
+  const cronJobSubmenuIds = new Set<string>();
+
+  const ensureCronJobSubmenu = (jobId: string, root: Menu<BotContext>): string => {
+    const subId = `cron-job-${botIndex}-${jobId}`;
+    if (cronJobSubmenuIds.has(subId)) return subId;
+    cronJobSubmenuIds.add(subId);
+
+    const sub = new Menu<BotContext>(subId, {
+      onMenuOutdated: "菜单已更新，请重试",
+      fingerprint: (ctx) => {
+        const chatId = ctx.chat?.id ?? 0;
+        const job = cron.get(jobId);
+        if (!job || job.chatId !== chatId) return "missing";
+        return [
+          `enabled:${job.enabled ? 1 : 0}`,
+          `running:${job.state.runningRunId ? 1 : 0}`,
+          `next:${job.state.nextRunAtMs}`,
+          `updated:${job.updatedAtMs}`,
+        ].join("|");
+      },
+    }).dynamic((ctx, range) => {
+      const chatId = ctx.chat?.id ?? 0;
+      const job = cron.get(jobId);
+
+      if (!job || job.chatId !== chatId) {
+        range.text("⚠️ 任务不存在或无权限", (ctx) => ctx.answerCallbackQuery({ text: "任务不存在" })).row();
+        range.back("⬅️ 返回", (ctx) => ctx.answerCallbackQuery());
+        return;
+      }
+
+      const running = job.state.runningRunId ? "⏳ 运行中" : "🟢 空闲";
+      range.text(`${job.enabled ? "✅" : "⏸"} ${truncate(job.name, 24)}`, (ctx) =>
+        ctx.answerCallbackQuery({ text: `${running} | ${formatCronSchedule(job.schedule)}` }),
+      ).row();
+
+      range.text(job.enabled ? "⏸ 停用" : "▶️ 启用", async (ctx) => {
+        await cron.setEnabled(job.id, !job.enabled);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: job.enabled ? "已停用" : "已启用" });
+      });
+
+      range.text("▶️ 立即执行", async (ctx) => {
+        const ok = await cron.runNow(job.id);
+        await ctx.answerCallbackQuery({ text: ok ? "已加入执行队列" : "加入失败" });
+      });
+
+      range.text("✏️ 重命名", async (ctx) => {
+        cronPendingInput.set(chatId, { kind: "rename", jobId: job.id, startedAt: Date.now() });
+        await ctx.answerCallbackQuery({ text: "请发送新名称" });
+        await ctx.reply(`✏️ 请发送任务 ${job.id} 的新名称`);
+      }).row();
+
+      range.text("🗑 删除", async (ctx) => {
+        await cron.remove(job.id);
+        await ctx.answerCallbackQuery({ text: "已删除" });
+      }).row();
+
+      range.back("⬅️ 返回", (ctx) => ctx.answerCallbackQuery());
+    });
+
+    root.register(sub);
+    return subId;
+  };
+
+  const cronMenu = new Menu<BotContext>(cronRootMenuId, {
+    onMenuOutdated: "菜单已更新，请重试",
+    fingerprint: (ctx) => {
+      const chatId = ctx.chat?.id ?? 0;
+      const st = cron.status(chatId);
+      const pending = cronPendingInput.get(chatId);
+      const jobs = cron.list(chatId).slice(0, 30)
+        .map((x) => `${x.id}:${x.enabled ? 1 : 0}:${x.updatedAtMs}`)
+        .join(",");
+      return [
+        `enabled:${st.enabled ? 1 : 0}`,
+        `total:${st.totalJobs}`,
+        `queued:${st.queuedJobs}`,
+        `pending:${pending?.kind ?? ""}`,
+        jobs,
+      ].join("|");
+    },
+  }).dynamic((ctx, range) => {
+    const chatId = ctx.chat?.id ?? 0;
+    const st = cron.status(chatId);
+    const jobs = cron.list(chatId);
+    const pending = cronPendingInput.get(chatId);
+
+    range.text(
+      `📊 ${st.enabled ? "开启" : "关闭"} | 任务 ${st.totalJobs} | 运行 ${st.runningJobs} | 队列 ${st.queuedJobs}`,
+      (ctx) => ctx.answerCallbackQuery({ text: "状态已更新" }),
+    ).row();
+
+    range.text("🔄 刷新", async (ctx) => {
+      try { ctx.menu.update(); } catch { /* ignore */ }
+      await ctx.answerCallbackQuery({ text: "已刷新" });
+    });
+
+    range.text("➕ 一次性", async (ctx) => {
+      cronPendingInput.set(chatId, { kind: "at", startedAt: Date.now() });
+      await ctx.answerCallbackQuery({ text: "请发送: <ISO时间> <内容>" });
+      await ctx.reply("🕒 请输入一次性任务：\n<ISO时间> <内容>\n可选名称：<ISO时间> <名称||内容>\n例如：2026-03-01T09:00:00+08:00 早报总结");
+      try { ctx.menu.update(); } catch { /* ignore */ }
+    }).row();
+
+    range.text("➕ 间隔", async (ctx) => {
+      cronPendingInput.set(chatId, { kind: "every", startedAt: Date.now() });
+      await ctx.answerCallbackQuery({ text: "请发送: <间隔> <内容>" });
+      await ctx.reply("⏱ 请输入间隔任务：\n<间隔> <内容>\n可选名称：<间隔> <名称||内容>\n例如：10m 检查报警\n支持：s/m/h/d");
+      try { ctx.menu.update(); } catch { /* ignore */ }
+    });
+
+    range.text("➕ Cron", async (ctx) => {
+      cronPendingInput.set(chatId, { kind: "cron", startedAt: Date.now() });
+      await ctx.answerCallbackQuery({ text: "请发送: <表达式> | [时区] | [名称] | <内容>" });
+      await ctx.reply("🧩 请输入 Cron 任务：\n<表达式> | [时区] | [名称] | <内容>\n例如：0 9 * * 1-5 | Asia/Shanghai | 工作日早报 | 汇总日报");
+      try { ctx.menu.update(); } catch { /* ignore */ }
+    }).row();
+
+    if (pending) {
+      const ageSec = Math.max(0, Math.floor((Date.now() - pending.startedAt) / 1000));
+      range.text(`❌ 取消输入（${pending.kind}, ${ageSec}s）`, async (ctx) => {
+        cronPendingInput.delete(chatId);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: "已取消" });
+      }).row();
+    }
+
+    if (!jobs.length) {
+      range.text("当前无任务", (ctx) => ctx.answerCallbackQuery({ text: "暂无任务" }));
+      return;
+    }
+
+    const maxShow = Math.min(20, jobs.length);
+    for (let i = 0; i < maxShow; i += 1) {
+      const job = jobs[i];
+      const subId = ensureCronJobSubmenu(job.id, cronMenu);
+      const icon = job.enabled ? "🟢" : "⚪";
+      range.submenu(`${icon} ${truncate(job.name, 18)} [${job.id}]`, subId, (ctx) => ctx.answerCallbackQuery()).row();
+    }
+
+    if (jobs.length > maxShow) {
+      range.text(`还有 ${jobs.length - maxShow} 个任务未显示`, (ctx) =>
+        ctx.answerCallbackQuery({ text: "任务较多，请用 /cron list 查看全部" }),
+      );
+    }
+  });
+
+  bot.use(cronMenu);
+
+  const ensureCronMenuReady = async (tgCtx: BotContext): Promise<void> => {
+    await cronMenu.middleware()(tgCtx, async () => {});
+  };
+
   commandGroup.command("cron", "管理定时任务", async (tgCtx) => {
     try {
       const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "cron");
+      const chatId = tgCtx.chat.id;
+
+      if (!raw.trim()) {
+        const pending = cronPendingInput.get(chatId);
+        const hint = pending
+          ? `\n当前等待输入：${pending.kind}（请直接发送文本，或在菜单中取消）`
+          : "";
+        await ensureCronMenuReady(tgCtx);
+        await tgCtx.reply(`⏰ 定时任务菜单${hint}`, { reply_markup: cronMenu });
+        return;
+      }
+
       const args = splitCommandArgs(raw);
       const sub = (args.shift() || "help").toLowerCase();
-      const chatId = tgCtx.chat.id;
 
     if (sub === "help" || sub === "h" || sub === "?") {
       await tgCtx.reply(CRON_HELP_TEXT);
@@ -351,7 +525,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
       if (kind === "at") {
         const atRaw = args.shift() || "";
-        const prompt = args.join(" ").trim();
+        const named = parseNamedPrompt(args.join(" "));
+        const prompt = named.prompt;
         if (!atRaw || !prompt) {
           await tgCtx.reply("用法：/cron add at <ISO时间> <内容>");
           return;
@@ -365,16 +540,18 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
         const job = await cron.create({
           chatId,
+          name: named.name,
           prompt,
           schedule: { kind: "at", atMs },
         });
-        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return;
       }
 
       if (kind === "every") {
         const everyRaw = args.shift() || "";
-        const prompt = args.join(" ").trim();
+        const named = parseNamedPrompt(args.join(" "));
+        const prompt = named.prompt;
         const everyMs = parseDurationMs(everyRaw);
         if (!everyMs || !prompt) {
           await tgCtx.reply("用法：/cron add every <间隔> <内容>\n示例：/cron add every 10m 早报总结");
@@ -383,10 +560,11 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
         const job = await cron.create({
           chatId,
+          name: named.name,
           prompt,
           schedule: { kind: "every", everyMs, anchorMs: Date.now() },
         });
-        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return;
       }
 
@@ -402,7 +580,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
           timezone = args.shift()!;
         }
 
-        const prompt = args.join(" ").trim();
+        const named = parseNamedPrompt(args.join(" "));
+        const prompt = named.prompt;
         if (!prompt) {
           await tgCtx.reply("用法：/cron add cron \"<表达式>\" [时区] <内容>");
           return;
@@ -410,11 +589,12 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
         const job = await cron.create({
           chatId,
+          name: named.name,
           prompt,
           schedule: { kind: "cron", expr, timezone },
         });
 
-        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}`);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return;
       }
 
@@ -450,6 +630,27 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       }
       await cron.remove(id);
       await tgCtx.reply(`🗑 已删除任务 ${id}`);
+      return;
+    }
+
+    if (sub === "rename" || sub === "name") {
+      const id = (args.shift() || "").trim();
+      const newName = args.join(" ").trim();
+      if (!id || !newName) {
+        await tgCtx.reply("用法：/cron rename <id> <新名称>");
+        return;
+      }
+      const job = cron.get(id);
+      if (!job || job.chatId !== chatId) {
+        await tgCtx.reply("未找到该任务（或不属于当前聊天）");
+        return;
+      }
+      const updated = await cron.rename(id, newName);
+      if (!updated) {
+        await tgCtx.reply("重命名失败");
+        return;
+      }
+      await tgCtx.reply(`✏️ 任务 ${id} 已重命名为：${updated.name}`);
       return;
     }
 
@@ -529,6 +730,314 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     }
   };
 
+  const executeCronDirectiveForChat = async (
+    chatId: number,
+    directive: TgCronDirective,
+  ): Promise<{ notices: string[]; warnings: string[] }> => {
+    const notices: string[] = [];
+    const warnings: string[] = [];
+
+    const ensureOwned = (id: string): CronJobRecord => {
+      const job = cron.get(id);
+      if (!job || job.chatId !== chatId) {
+        throw new Error("未找到该任务（或不属于当前聊天）");
+      }
+      return job;
+    };
+
+    switch (directive.action) {
+      case "list": {
+        const jobs = cron.list(chatId);
+        if (!jobs.length) {
+          notices.push("⏰ 当前聊天暂无定时任务。");
+          break;
+        }
+        notices.push(`⏰ 定时任务（${jobs.length}）\n${jobs.map((x) => formatCronJobLine(x)).join("\n")}`);
+        break;
+      }
+
+      case "stat": {
+        notices.push(formatCronStatus(cron.status(chatId)));
+        break;
+      }
+
+      case "add": {
+        const prompt = String(directive.prompt || "").trim();
+        if (!prompt) throw new Error("add 缺少任务内容");
+
+        const kind = directive.kind;
+        if (!kind) throw new Error("add 缺少 kind");
+
+        let schedule: CronSchedule;
+
+        if (kind === "at") {
+          const atRaw = String(directive.at || "").trim();
+          const atMs = new Date(atRaw).getTime();
+          if (!Number.isFinite(atMs)) {
+            throw new Error("add kind=at 的 at 时间非法（需 ISO 时间）");
+          }
+          schedule = { kind: "at", atMs };
+        } else if (kind === "every") {
+          const everyMs = parseDurationMs(String(directive.every || "").trim());
+          if (!everyMs) {
+            throw new Error("add kind=every 的 every 非法（如 10m/2h/1d）");
+          }
+          schedule = { kind: "every", everyMs, anchorMs: Date.now() };
+        } else {
+          const expr = String(directive.expr || "").trim();
+          if (!expr) throw new Error("add kind=cron 缺少 expr");
+
+          const tzRaw = String(directive.timezone || "").trim();
+          const timezone = tzRaw || cron.getDefaultTimezone();
+          if (!looksLikeTimezone(timezone)) {
+            throw new Error(`timezone 非法：${timezone}`);
+          }
+          schedule = { kind: "cron", expr, timezone };
+        }
+
+        const created = await cron.create({
+          chatId,
+          name: directive.name,
+          prompt,
+          schedule,
+        });
+
+        notices.push(`✅ 已创建任务 ${created.id}\n${formatCronSchedule(created.schedule)}\n名称：${created.name}`);
+        break;
+      }
+
+      case "on": {
+        const id = String(directive.id || "").trim();
+        if (!id) throw new Error("on 缺少 id");
+        ensureOwned(id);
+        await cron.setEnabled(id, true);
+        notices.push(`✅ 任务 ${id} 已启用`);
+        break;
+      }
+
+      case "off": {
+        const id = String(directive.id || "").trim();
+        if (!id) throw new Error("off 缺少 id");
+        ensureOwned(id);
+        await cron.setEnabled(id, false);
+        notices.push(`✅ 任务 ${id} 已停用`);
+        break;
+      }
+
+      case "del": {
+        const id = String(directive.id || "").trim();
+        if (!id) throw new Error("del 缺少 id");
+        ensureOwned(id);
+        await cron.remove(id);
+        notices.push(`🗑 已删除任务 ${id}`);
+        break;
+      }
+
+      case "rename": {
+        const id = String(directive.id || "").trim();
+        if (!id) throw new Error("rename 缺少 id");
+        ensureOwned(id);
+
+        const newName = String(directive.name || "").trim();
+        if (!newName) throw new Error("rename 缺少 name");
+
+        const updated = await cron.rename(id, newName);
+        if (!updated) throw new Error("rename 失败");
+
+        notices.push(`✏️ 任务 ${id} 已重命名为：${updated.name}`);
+        break;
+      }
+
+      case "run": {
+        const id = String(directive.id || "").trim();
+        if (!id) throw new Error("run 缺少 id");
+        ensureOwned(id);
+        const ok = await cron.runNow(id);
+        notices.push(ok ? `▶️ 任务 ${id} 已加入执行队列` : `❌ 任务 ${id} 加入队列失败`);
+        break;
+      }
+
+      default:
+        warnings.push(`不支持的 tg-cron action: ${(directive as any).action}`);
+        break;
+    }
+
+    return { notices, warnings };
+  };
+
+  const applyCronToolDirectives = async (
+    tgCtx: BotContext,
+    text: string,
+  ): Promise<{ text: string; warnings: string[] }> => {
+    const extracted = extractTgCronDirectives(text || "");
+    const warnings = [...extracted.warnings];
+    const notices: string[] = [];
+    const chatId = tgCtx.chat?.id ?? 0;
+
+    for (const directive of extracted.directives) {
+      try {
+        const res = await executeCronDirectiveForChat(chatId, directive);
+        notices.push(...res.notices);
+        warnings.push(...res.warnings);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        warnings.push(`tg-cron(${directive.action}) 执行失败：${message}`);
+      }
+    }
+
+    const mergedText = [extracted.text.trim(), ...notices].filter(Boolean).join("\n\n");
+    return { text: mergedText, warnings };
+  };
+
+  const consumePendingCronInput = async (
+    tgCtx: BotContext,
+    pending: CronPendingInput,
+    text: string,
+  ): Promise<boolean> => {
+    const chatId = tgCtx.chat?.id ?? 0;
+    const raw = String(text || "").trim();
+    if (!raw) return true;
+
+    try {
+      if (pending.kind === "rename") {
+        const job = cron.get(pending.jobId);
+        if (!job || job.chatId !== chatId) {
+          cronPendingInput.delete(chatId);
+          await tgCtx.reply("❌ 目标任务不存在或不属于当前聊天");
+          return true;
+        }
+
+        const updated = await cron.rename(pending.jobId, raw);
+        cronPendingInput.delete(chatId);
+        if (!updated) {
+          await tgCtx.reply("❌ 重命名失败", { reply_markup: cronMenu });
+          return true;
+        }
+
+        await tgCtx.reply(`✏️ 任务 ${updated.id} 已重命名为：${updated.name}`, {
+          reply_markup: cronMenu,
+        });
+        return true;
+      }
+
+      if (pending.kind === "at") {
+        const firstSpace = raw.indexOf(" ");
+        if (firstSpace < 0) {
+          await tgCtx.reply("❌ 格式不对，请发送：<ISO时间> <内容>");
+          return true;
+        }
+
+        const atRaw = raw.slice(0, firstSpace).trim();
+        const named = parseNamedPrompt(raw.slice(firstSpace + 1));
+        const prompt = named.prompt;
+        const atMs = new Date(atRaw).getTime();
+
+        if (!Number.isFinite(atMs) || !prompt) {
+          await tgCtx.reply("❌ 格式不对，请发送：<ISO时间> <内容>");
+          return true;
+        }
+
+        const job = await cron.create({
+          chatId,
+          name: named.name,
+          prompt,
+          schedule: { kind: "at", atMs },
+        });
+
+        cronPendingInput.delete(chatId);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
+          reply_markup: cronMenu,
+        });
+        return true;
+      }
+
+      if (pending.kind === "every") {
+        const firstSpace = raw.indexOf(" ");
+        if (firstSpace < 0) {
+          await tgCtx.reply("❌ 格式不对，请发送：<间隔> <内容>，例如：10m 检查报警");
+          return true;
+        }
+
+        const everyRaw = raw.slice(0, firstSpace).trim();
+        const named = parseNamedPrompt(raw.slice(firstSpace + 1));
+        const prompt = named.prompt;
+        const everyMs = parseDurationMs(everyRaw);
+
+        if (!everyMs || !prompt) {
+          await tgCtx.reply("❌ 间隔格式非法，支持：s/m/h/d（如 30s、10m、2h、1d）");
+          return true;
+        }
+
+        const job = await cron.create({
+          chatId,
+          name: named.name,
+          prompt,
+          schedule: { kind: "every", everyMs, anchorMs: Date.now() },
+        });
+
+        cronPendingInput.delete(chatId);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
+          reply_markup: cronMenu,
+        });
+        return true;
+      }
+
+      // pending.kind === "cron"
+      const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
+      if (parts.length < 2) {
+        await tgCtx.reply("❌ 格式不对，请发送：<表达式> | [时区] | [名称] | <内容>");
+        return true;
+      }
+
+      const expr = parts[0];
+      let timezone = cron.getDefaultTimezone();
+      let name: string | undefined;
+      let prompt = "";
+
+      if (parts.length >= 4) {
+        timezone = parts[1];
+        name = parts[2] || undefined;
+        prompt = parts.slice(3).join(" | ").trim();
+      } else if (parts.length === 3) {
+        timezone = parts[1];
+        const named = parseNamedPrompt(parts[2]);
+        name = named.name;
+        prompt = named.prompt;
+      } else {
+        const named = parseNamedPrompt(parts[1]);
+        name = named.name;
+        prompt = named.prompt;
+      }
+
+      if (!prompt) {
+        await tgCtx.reply("❌ 缺少任务内容，请发送：<表达式> | [时区] | [名称] | <内容>");
+        return true;
+      }
+
+      if (!looksLikeTimezone(timezone)) {
+        await tgCtx.reply(`❌ 时区格式非法：${timezone}`);
+        return true;
+      }
+
+      const job = await cron.create({
+        chatId,
+        name,
+        prompt,
+        schedule: { kind: "cron", expr, timezone },
+      });
+
+      cronPendingInput.delete(chatId);
+      await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
+        reply_markup: cronMenu,
+      });
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await tgCtx.reply(`❌ 创建任务失败：${truncate(message, 800)}\n可继续输入，或打开 /cron 菜单取消`).catch(() => {});
+      return true;
+    }
+  };
+
   const runPromptRequest = async (
     tgCtx: BotContext,
     inst: ReturnType<PiPool["get"]>,
@@ -565,7 +1074,15 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             onToolStart: stream.onToolStart,
             onToolError: stream.onToolError,
           });
-          await finalizeReply(status, tgCtx, result.text, result.tools, maxResponseLength);
+          const processed = await applyCronToolDirectives(tgCtx, result.text);
+          await finalizeReply(
+            status,
+            tgCtx,
+            processed.text,
+            result.tools,
+            maxResponseLength,
+            processed.warnings,
+          );
         } finally {
           // Stop pending stream timer before final render.
           stream.dispose();
@@ -575,7 +1092,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
       const result = await inst.prompt(promptMessage, images, { onStart });
       await status.delete().catch(() => {});
-      await sendReply(tgCtx, result.text, result.tools, maxResponseLength);
+      const processed = await applyCronToolDirectives(tgCtx, result.text);
+      await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await reportStatusOrReply(
@@ -591,7 +1109,14 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   // Text messages
   bot.on("message:text", async (tgCtx) => {
     const text = tgCtx.message.text;
-    if (!text || text.startsWith("/")) return;
+    if (!text) return;
+    if (text.startsWith("/")) return;
+
+    const pending = cronPendingInput.get(tgCtx.chat.id);
+    if (pending) {
+      const handled = await consumePendingCronInput(tgCtx, pending, text);
+      if (handled) return;
+    }
 
     rememberReplyMessage(replyScopeKey(tgCtx), "user", tgCtx.message.message_id, text);
     rememberReferencedReply(tgCtx);
@@ -1112,13 +1637,13 @@ function stripProtocolTags(text: string): string {
   let out = text;
 
   // Normal tags.
-  out = out.replace(/<\/?\s*tg-(?:attachment|reply)\b[^>]*>/gi, "");
+  out = out.replace(/<\/?\s*tg-(?:attachment|reply|cron)\b[^>]*>/gi, "");
 
   // Dangling/incomplete start tags.
-  out = out.replace(/<\s*tg-(?:attachment|reply)\b[^\r\n>]*/gi, "");
+  out = out.replace(/<\s*tg-(?:attachment|reply|cron)\b[^\r\n>]*/gi, "");
 
   // HTML-escaped tags.
-  out = out.replace(/&lt;\/?\s*tg-(?:attachment|reply)\b[\s\S]*?&gt;/gi, "");
+  out = out.replace(/&lt;\/?\s*tg-(?:attachment|reply|cron)\b[\s\S]*?&gt;/gi, "");
 
   return out;
 }
@@ -1188,7 +1713,12 @@ function prepareCronReply(text: string, tools: string[]): CronPreparedReply {
   };
 }
 
-function prepareReply(tgCtx: BotContext, text: string, tools: string[]): PreparedReply {
+function prepareReply(
+  tgCtx: BotContext,
+  text: string,
+  tools: string[],
+  extraWarnings: string[] = [],
+): PreparedReply {
   const extractedReply = extractTgReplyDirective(text || "");
   const extracted = extractTgAttachments(extractedReply.text);
   const resolvedReply = resolveReplyParameters(replyScopeKey(tgCtx), extractedReply.directive);
@@ -1205,7 +1735,7 @@ function prepareReply(tgCtx: BotContext, text: string, tools: string[]): Prepare
   return {
     body,
     attachments: extracted.attachments,
-    warnings: [...extractedReply.warnings, ...extracted.warnings, ...resolvedReply.warnings],
+    warnings: [...extractedReply.warnings, ...extracted.warnings, ...resolvedReply.warnings, ...extraWarnings],
     replyParameters: resolvedReply.replyParameters,
   };
 }
@@ -1330,8 +1860,9 @@ async function finalizeReply(
   text: string,
   tools: string[],
   maxLen: number,
+  extraWarnings: string[] = [],
 ): Promise<void> {
-  const prepared = prepareReply(tgCtx, text, tools);
+  const prepared = prepareReply(tgCtx, text, tools, extraWarnings);
   const hasBody = prepared.body.trim().length > 0;
   const hasReplyTarget = !!prepared.replyParameters;
 
@@ -1374,21 +1905,24 @@ async function sendReply(
   text: string,
   tools: string[],
   maxLen: number,
+  extraWarnings: string[] = [],
 ): Promise<void> {
-  const prepared = prepareReply(tgCtx, text, tools);
+  const prepared = prepareReply(tgCtx, text, tools, extraWarnings);
   await sendPreparedReply(tgCtx, prepared, maxLen);
 }
 
 const CRON_HELP_TEXT = [
   "⏰ /cron 用法",
+  "- /cron（打开交互菜单）",
   "- /cron list",
   "- /cron stat",
-  "- /cron add at <ISO时间> <内容>",
-  "- /cron add every <间隔> <内容>（如 10m、2h、1d）",
-  "- /cron add cron \"<表达式>\" [时区] <内容>",
+  "- /cron add at <ISO时间> <内容>（可用 名称||内容 指定任务名）",
+  "- /cron add every <间隔> <内容>（如 10m、2h、1d；可用 名称||内容）",
+  "- /cron add cron \"<表达式>\" [时区] <内容>（可用 名称||内容）",
   "- /cron on <id>",
   "- /cron off <id>",
   "- /cron del <id>",
+  "- /cron rename <id> <新名称>",
   "- /cron run <id>",
 ].join("\n");
 
@@ -1407,6 +1941,27 @@ function splitCommandArgs(input: string): string[] {
     out.push(token.replace(/\\(["'\\])/g, "$1"));
   }
   return out;
+}
+
+function parseNamedPrompt(input: string): { name?: string; prompt: string } {
+  const raw = String(input || "").trim();
+  if (!raw) return { prompt: "" };
+
+  const sep = raw.indexOf("||");
+  if (sep < 0) {
+    return { prompt: raw };
+  }
+
+  const left = raw.slice(0, sep).trim();
+  const right = raw.slice(sep + 2).trim();
+  if (!right) {
+    return { prompt: raw };
+  }
+
+  return {
+    name: left || undefined,
+    prompt: right,
+  };
 }
 
 function parseDurationMs(input: string): number | undefined {
