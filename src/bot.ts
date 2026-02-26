@@ -11,7 +11,7 @@ import { hydrate, type HydrateFlavor } from "@grammyjs/hydrate";
 import { CommandGroup } from "@grammyjs/commands";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import { log } from "./log.js";
-import { mdToTgHtml } from "./md2tg.js";
+import { mdToPlainText, mdToTgHtml } from "./md2tg.js";
 import { createBotMenus } from "./menu.js";
 
 import {
@@ -281,7 +281,9 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       const promptMessage = message;
 
       if (useStream) {
-        const stream = createStreamUpdater(status, maxResponseLength);
+        const stream = createStreamUpdater(status, maxResponseLength, (err) => {
+          log.warn(`chat${chatId} 流式 HTML 预览失败，降级纯文本：${describeTelegramSendError(err)}`);
+        });
         try {
           const result = await inst.prompt(promptMessage, images, {
             onStart,
@@ -662,6 +664,13 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
+function describeTelegramSendError(err: unknown): string {
+  if (err instanceof GrammyError) return err.description;
+  if (err instanceof HttpError) return String(err);
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
@@ -753,6 +762,7 @@ interface StreamUpdater {
 function createStreamUpdater(
   status: { editText: (text: string, other?: Record<string, unknown>) => Promise<unknown> },
   maxLen: number,
+  onHtmlFallback?: (err: unknown) => void,
 ): StreamUpdater {
   const minEditIntervalMs = 700;
   // Reserve room for HTML tags/entities during streaming render
@@ -775,8 +785,10 @@ function createStreamUpdater(
     lastRendered = html;
     lastEditAt = Date.now();
 
-    status.editText(html, { parse_mode: "HTML" }).catch(() => {
-      status.editText(preview).catch(() => {});
+    status.editText(html, { parse_mode: "HTML" }).catch((err) => {
+      try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
+      const plain = mdToPlainText(preview);
+      status.editText(plain).catch(() => {});
     });
   };
 
@@ -797,7 +809,7 @@ function createStreamUpdater(
 
   return {
     onTextDelta: (_delta, fullText) => {
-      text = fullText;
+      text = stripProtocolTags(fullText);
       scheduleRender();
     },
     onToolStart: (toolName) => {
@@ -820,6 +832,21 @@ function createStreamUpdater(
       }
     },
   };
+}
+
+function stripProtocolTags(text: string): string {
+  let out = text;
+
+  // Normal tags.
+  out = out.replace(/<\/?\s*tg-(?:attachment|reply)\b[^>]*>/gi, "");
+
+  // Dangling/incomplete start tags.
+  out = out.replace(/<\s*tg-(?:attachment|reply)\b[^\r\n>]*/gi, "");
+
+  // HTML-escaped tags.
+  out = out.replace(/&lt;\/?\s*tg-(?:attachment|reply)\b[\s\S]*?&gt;/gi, "");
+
+  return out;
 }
 
 function buildStreamingPreview(text: string, tools: string[], limit: number): string {
@@ -865,7 +892,7 @@ function prepareReply(tgCtx: BotContext, text: string, tools: string[]): Prepare
   const extractedReply = extractTgReplyDirective(text || "");
   const extracted = extractTgAttachments(extractedReply.text);
   const resolvedReply = resolveReplyParameters(replyScopeKey(tgCtx), extractedReply.directive);
-  let body = extracted.text;
+  let body = stripProtocolTags(extracted.text);
 
   if (tools.length) {
     body = `${tools.join("\n")}${body ? `\n\n${body}` : ""}`;
@@ -898,9 +925,12 @@ async function sendPreparedReply(
       try {
         const sent = await tgCtx.reply(html, { parse_mode: "HTML", ...(opts ?? {}) });
         rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, part);
-      } catch {
-        const sent = await tgCtx.reply(part, opts);
-        rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, part);
+      } catch (err) {
+        log.warn(`chat${tgCtx.chat?.id ?? 0} HTML 发送失败，降级纯文本：${describeTelegramSendError(err)}`);
+        const safePart = stripProtocolTags(part);
+        const plain = mdToPlainText(safePart);
+        const sent = await tgCtx.reply(plain, opts);
+        rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, plain);
       }
       first = false;
     }
@@ -1029,7 +1059,8 @@ async function finalizeReply(
       }
       await sendAttachments(tgCtx, prepared.attachments, prepared.warnings);
       return;
-    } catch {
+    } catch (err) {
+      log.warn(`chat${tgCtx.chat?.id ?? 0} 流式收尾 HTML 失败，走常规发送：${describeTelegramSendError(err)}`);
       // fallback to normal send path
     }
   }

@@ -84,3 +84,17 @@ export function mdToTgHtml(text: string): string {
   // Telegram accepts plain text too; avoid empty HTML payloads
   return safe || "(无回复)";
 }
+
+export function mdToPlainText(text: string): string {
+  const html = md.render(text || "");
+  const plain = sanitize(html, {
+    allowedTags: [],
+    allowedAttributes: {},
+    disallowedTagsMode: "discard",
+  })
+    .replace(/\u00a0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return plain || "(无回复)";
+}
