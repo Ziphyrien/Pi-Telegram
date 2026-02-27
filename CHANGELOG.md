@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-02-26
+
+又写错版本号了，多加了个.1
+
 ### New Features
 
 - Added a full cron subsystem for Pi-Telegram with persistent per-bot storage:
