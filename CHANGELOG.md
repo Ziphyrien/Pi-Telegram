@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Suppressed noisy Telegram `message is not modified` warnings during streaming edits.
+- Treated `message is not modified` on streaming finalization as success (no unnecessary fallback send).
+
 ## [0.3.1] - 2026-02-26
 
 又写错版本号了，多加了个.1

@@ -1470,6 +1470,11 @@ function describeTelegramSendError(err: unknown): string {
   return String(err);
 }
 
+function isMessageNotModifiedError(err: unknown): boolean {
+  const text = describeTelegramSendError(err).toLowerCase();
+  return text.includes("message is not modified");
+}
+
 interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
@@ -1585,6 +1590,7 @@ function createStreamUpdater(
     lastEditAt = Date.now();
 
     status.editText(html, { parse_mode: "HTML" }).catch((err) => {
+      if (isMessageNotModifiedError(err)) return;
       try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
       const plain = mdToPlainText(preview);
       status.editText(plain).catch(() => {});
@@ -1891,6 +1897,14 @@ async function finalizeReply(
       await sendAttachments(tgCtx, prepared.attachments, prepared.warnings);
       return;
     } catch (err) {
+      if (isMessageNotModifiedError(err)) {
+        if (typeof status.message_id === "number") {
+          rememberReplyMessage(replyScopeKey(tgCtx), "self", status.message_id, parts[0]);
+        }
+        await sendAttachments(tgCtx, prepared.attachments, prepared.warnings);
+        return;
+      }
+
       log.warn(`chat${tgCtx.chat?.id ?? 0} 流式收尾 HTML 失败，走常规发送：${describeTelegramSendError(err)}`);
       // fallback to normal send path
     }
