@@ -17,6 +17,9 @@ importers:
       '@grammyjs/commands':
         specifier: ^1.2.0
         version: 1.2.0(grammy@1.40.0)
+      '@grammyjs/files':
+        specifier: ^1.1.1
+        version: 1.2.0(grammy@1.40.0)
       '@grammyjs/hydrate':
         specifier: ^1.6.0
         version: 1.6.0(grammy@1.40.0)
@@ -392,6 +395,12 @@ packages:
     resolution: {integrity: sha512-np3uZElWtVIQk8w73szBXcubuKFOEGnp+4dHyhw+KeVsN/yVwuaEAxt+kyEhfTUQdNH0zU7ffuCM2l7lVUDBWw==}
     peerDependencies:
       grammy: ^1.17.1
+
+  '@grammyjs/files@1.2.0':
+    resolution: {integrity: sha512-UhQNGe2gpGgGMdrAUFXrZld3qQjt/3oYBHIo1aU0zIrKKvI5bgxzXSjPaJpx69HUO9mM7TbOaSsJL8lWbqnzJw==}
+    engines: {node: ^12.20.0 || >=14.13.1}
+    peerDependencies:
+      grammy: ^1.3.0
 
   '@grammyjs/hydrate@1.6.0':
     resolution: {integrity: sha512-dpszYCuzrYhhSJNjwV+zhG9SpwfFkO6nk+IHa56cd8ZCLO//aVVHOO5vKeobq4chhDu+MYjn7KaQMp0sn4Lb/g==}
@@ -2009,6 +2018,10 @@ snapshots:
       - supports-color
 
   '@grammyjs/commands@1.2.0(grammy@1.40.0)':
+    dependencies:
+      grammy: 1.40.0
+
+  '@grammyjs/files@1.2.0(grammy@1.40.0)':
     dependencies:
       grammy: 1.40.0
 

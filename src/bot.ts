@@ -8,6 +8,7 @@ import { Bot, GrammyError, HttpError, type Context } from "grammy";
 import type { ReplyParameters } from "@grammyjs/types";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { hydrate, type HydrateFlavor } from "@grammyjs/hydrate";
+import { hydrateFiles } from "@grammyjs/files";
 import { CommandGroup } from "@grammyjs/commands";
 import { Menu } from "@grammyjs/menu";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
@@ -60,6 +61,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   const botKey = createHash("sha1").update(config.token).digest("hex").slice(0, 12);
 
   // --- plugins ---
+  bot.api.config.use(hydrateFiles(config.token));
   bot.api.config.use(autoRetry({ maxRetryAttempts: 5, maxDelaySeconds: 60 }));
   bot.use(hydrate());
   bot.use(autoChatAction());
@@ -1160,6 +1162,39 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     });
   });
 
+  // Generic files (documents)
+  bot.on("message:document", async (tgCtx) => {
+    const document = tgCtx.message.document;
+    const baseText = tgCtx.message.caption || document.file_name || "请处理这个文件";
+    rememberReplyMessage(replyScopeKey(tgCtx), "user", tgCtx.message.message_id, baseText);
+    rememberReferencedReply(tgCtx);
+
+    const key = chatKey(botKey, tgCtx.chat.id);
+    const inst = pool.get(key);
+
+    await runPromptRequest(tgCtx, inst, async ({ supportsImages }) => {
+      const loaded = await downloadInboundFileByFileId(
+        tgCtx,
+        config.token,
+        document.file_id,
+        String(document.mime_type || "application/octet-stream"),
+        supportsImages,
+      );
+
+      const currentImages = loaded?.image ? [loaded] : [];
+      const currentFilePaths = loaded ? [normalizePromptPath(loaded.localPath)] : [];
+
+      return buildPromptPayloadWithReplyContext(
+        tgCtx,
+        baseText,
+        config.token,
+        supportsImages,
+        currentImages,
+        currentFilePaths,
+      );
+    });
+  });
+
   // Sync command menu from command group definitions
   commandGroup.setCommands(bot)
     .catch((err) => log.error(`bot${botIndex}`, `setCommands: ${err}`));
@@ -1201,6 +1236,7 @@ interface LoadedImage {
 interface ReplyContextOptions {
   currentImagePaths?: string[];
   referencedImagePaths?: string[];
+  currentFilePaths?: string[];
 }
 
 async function buildPromptPayloadWithReplyContext(
@@ -1209,14 +1245,21 @@ async function buildPromptPayloadWithReplyContext(
   token: string,
   enableImages: boolean,
   currentImages: LoadedImage[] = [],
+  currentFilePaths: string[] = [],
 ): Promise<{ message: string; images?: PiImage[] }> {
   const dedupeIds = new Set(currentImages.map((x) => x.fileId.toLowerCase()));
   const referencedImages = await collectReferencedImages(tgCtx, token, dedupeIds, enableImages);
 
   const deduped = dedupeLoadedImageGroups(currentImages, referencedImages);
+  const normalizedCurrentFilePaths = normalizePromptPathList([
+    ...currentFilePaths,
+    ...toPromptPathList(deduped.current),
+  ]);
+
   const message = buildUserMessageWithReplyContext(tgCtx, content, {
     currentImagePaths: toPromptPathList(deduped.current),
     referencedImagePaths: toPromptPathList(deduped.referenced),
+    currentFilePaths: normalizedCurrentFilePaths,
   });
 
   return {
@@ -1237,6 +1280,7 @@ function buildUserMessageWithReplyContext(
   const quote = String(current?.quote?.text || "").trim();
   const currentImagePaths = opts.currentImagePaths ?? [];
   const referencedImagePaths = opts.referencedImagePaths ?? [];
+  const currentFilePaths = opts.currentFilePaths ?? [];
 
   const targetText = extractMessageText(replied);
   const targetFrom = formatMessageSender(replied, tgCtx.me.id);
@@ -1244,7 +1288,8 @@ function buildUserMessageWithReplyContext(
     !!targetText
     || !!quote
     || referencedImagePaths.length > 0
-    || currentImagePaths.length > 0;
+    || currentImagePaths.length > 0
+    || currentFilePaths.length > 0;
 
   if (!hasUsefulReply) return content;
 
@@ -1258,6 +1303,9 @@ function buildUserMessageWithReplyContext(
       : "",
     currentImagePaths.length > 0
       ? `current_image_paths:\n- ${currentImagePaths.join("\n- ")}`
+      : "",
+    currentFilePaths.length > 0
+      ? `current_file_paths:\n- ${currentFilePaths.join("\n- ")}`
       : "",
     referencedImagePaths.length > 0 || currentImagePaths.length > 0
       ? "附图顺序：先 current_images（如果有），再 reply_to_images。"
@@ -1320,14 +1368,31 @@ async function downloadImageByFileId(
   fallbackMimeType = "image/jpeg",
   includeImage = true,
 ): Promise<LoadedImage | null> {
+  const loaded = await downloadInboundFileByFileId(
+    tgCtx,
+    token,
+    fileId,
+    fallbackMimeType,
+    includeImage,
+  );
+  if (!loaded) return null;
+  if (!loaded.image) return null;
+  return loaded;
+}
+
+async function downloadInboundFileByFileId(
+  tgCtx: BotContext,
+  token: string,
+  fileId: string,
+  fallbackMimeType = "application/octet-stream",
+  includeImage = true,
+): Promise<LoadedImage | null> {
   try {
-    const file = await tgCtx.api.getFile(fileId);
-    if (!file.file_path) return null;
+    const file = await tgCtx.api.getFile(fileId) as any;
+    if (!file?.file_path) return null;
 
     const filePath = String(file.file_path);
     const mimeType = inferImageMimeFromPath(filePath, fallbackMimeType);
-    if (!mimeType.startsWith("image/")) return null;
-
     const ext = inferImageExtFromPath(filePath, mimeType);
     const localPath = resolveInboundImagePath(tgCtx, fileId, ext);
 
@@ -1335,39 +1400,53 @@ async function downloadImageByFileId(
 
     const hasLocal = existsSync(localPath);
 
-    // Only fetch when local file is missing.
     if (!hasLocal) {
-      const url = `https://api.telegram.org/file/bot${token}/${filePath}`;
-      const resp = await fetch(url);
-      if (!resp.ok) return null;
-      buffer = Buffer.from(await resp.arrayBuffer());
-      await writeFile(localPath, buffer);
+      let downloaded = false;
+
+      if (typeof file.download === "function") {
+        try {
+          await file.download(localPath);
+          downloaded = true;
+        } catch {
+          downloaded = false;
+        }
+      }
+
+      if (!downloaded) {
+        const url = `https://api.telegram.org/file/bot${token}/${filePath}`;
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        buffer = Buffer.from(await resp.arrayBuffer());
+        await writeFile(localPath, buffer);
+      }
     }
 
     let contentHash: string | undefined;
-    if (buffer) {
+
+    const isImage = mimeType.startsWith("image/");
+    if (includeImage && isImage) {
+      if (!buffer) {
+        buffer = await readFile(localPath);
+      }
       contentHash = hashImageBuffer(buffer);
+      return {
+        fileId,
+        localPath,
+        contentHash,
+        image: {
+          type: "image",
+          data: buffer.toString("base64"),
+          mimeType,
+        },
+      };
     }
 
-    if (!includeImage) {
-      return { fileId, localPath, contentHash };
-    }
-
-    if (!buffer) {
+    if (!buffer && isImage) {
       buffer = await readFile(localPath);
       contentHash = hashImageBuffer(buffer);
     }
 
-    return {
-      fileId,
-      localPath,
-      contentHash,
-      image: {
-        type: "image",
-        data: buffer.toString("base64"),
-        mimeType,
-      },
-    };
+    return { fileId, localPath, contentHash };
   } catch {
     return null;
   }
@@ -1524,6 +1603,22 @@ function toPromptPathList(images: LoadedImage[]): string[] {
 
   for (const img of images) {
     const p = normalizePromptPath(img.localPath);
+    const key = p.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+
+  return out;
+}
+
+function normalizePromptPathList(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const pRaw of paths) {
+    const p = normalizePromptPath(String(pRaw || "").trim());
+    if (!p) continue;
     const key = p.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

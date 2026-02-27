@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Added `@grammyjs/files` integration for inbound Telegram file downloads (`hydrateFiles`).
+- Added document message handling (`message:document`) with local caching.
+- Added `current_file_paths` injection into reply context so local cached file paths can be referenced by the model.
+- Download pipeline now prefers `file.download(localPath)` (files plugin) and falls back to direct Bot API URL fetch when needed.
+
 ### Fixed
 
 - Suppressed noisy Telegram `message is not modified` warnings during streaming edits.
