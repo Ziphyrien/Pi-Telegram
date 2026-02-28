@@ -1080,6 +1080,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     const chatId = tgCtx.chat?.id ?? 0;
     const useStream = menus.isStreamEnabled(chatId);
+    let streamedText = "";
     tgCtx.chatAction = "typing";
     const onStart = ahead > 0
       ? () => {
@@ -1099,7 +1100,10 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         try {
           const result = await inst.prompt(promptMessage, images, {
             onStart,
-            onTextDelta: stream.onTextDelta,
+            onTextDelta: (delta, fullText) => {
+              streamedText = stripProtocolTags(fullText);
+              stream.onTextDelta(delta, fullText);
+            },
             onToolStart: stream.onToolStart,
             onToolError: stream.onToolError,
           });
@@ -1125,11 +1129,15 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await reportStatusOrReply(
-        tgCtx,
-        status,
-        message === "aborted" ? "🛑 已中止" : `❌ 错误：${message}`,
-      );
+      if (message === "aborted") {
+        await reportStatusOrReply(tgCtx, status, "🛑 已中止");
+      } else if (useStream && streamedText.trim()) {
+        const errLine = `⚠️ 生成中断：${truncate(message, 300)}`;
+        const merged = truncate(`${streamedText}\n\n${errLine}`, maxResponseLength);
+        await reportStatusOrReply(tgCtx, status, merged);
+      } else {
+        await reportStatusOrReply(tgCtx, status, `❌ 错误：${message}`);
+      }
     } finally {
       tgCtx.chatAction = null;
     }
