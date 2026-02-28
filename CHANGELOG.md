@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-26
+
 ### New Features
 
 - Added `@grammyjs/files` integration for inbound Telegram file downloads (`hydrateFiles`).

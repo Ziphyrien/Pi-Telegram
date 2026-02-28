@@ -1,6 +1,6 @@
 {
   "name": "@ziphyrien/pi-telegram",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Pi-Telegram: Bridge Telegram bots to pi coding agent via RPC",
   "type": "module",
   "files": [
