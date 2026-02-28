@@ -1076,6 +1076,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             onToolStart: stream.onToolStart,
             onToolError: stream.onToolError,
           });
+          await stream.stopAndWait();
           const processed = await applyCronToolDirectives(tgCtx, result.text);
           await finalizeReply(
             status,
@@ -1086,8 +1087,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             processed.warnings,
           );
         } finally {
-          // Stop pending stream timer before final render.
-          stream.dispose();
+          await stream.stopAndWait();
         }
         return;
       }
@@ -1655,6 +1655,7 @@ interface StreamUpdater {
   onTextDelta: (delta: string, fullText: string) => void;
   onToolStart: (toolName?: string) => void;
   onToolError: (toolName?: string) => void;
+  stopAndWait: () => Promise<void>;
   dispose: () => void;
 }
 
@@ -1672,6 +1673,7 @@ function createStreamUpdater(
   let lastEditAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  let pendingEdit: Promise<void> = Promise.resolve();
 
   const render = () => {
     if (disposed) return;
@@ -1684,12 +1686,25 @@ function createStreamUpdater(
     lastRendered = html;
     lastEditAt = Date.now();
 
-    status.editText(html, { parse_mode: "HTML" }).catch((err) => {
-      if (isMessageNotModifiedError(err)) return;
-      try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
-      const plain = mdToPlainText(preview);
-      status.editText(plain).catch(() => {});
-    });
+    pendingEdit = pendingEdit
+      .then(async () => {
+        if (disposed) return;
+        try {
+          await status.editText(html, { parse_mode: "HTML" });
+        } catch (err) {
+          if (isMessageNotModifiedError(err)) return;
+          try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
+          const plain = mdToPlainText(preview);
+          try {
+            await status.editText(plain);
+          } catch {
+            // ignore fallback failure
+          }
+        }
+      })
+      .catch(() => {
+        // keep chain alive
+      });
   };
 
   const scheduleRender = () => {
@@ -1704,6 +1719,14 @@ function createStreamUpdater(
         timer = null;
         render();
       }, wait);
+    }
+  };
+
+  const dispose = () => {
+    disposed = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
     }
   };
 
@@ -1724,13 +1747,13 @@ function createStreamUpdater(
       }
       scheduleRender();
     },
-    dispose: () => {
-      disposed = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
+    stopAndWait: async () => {
+      dispose();
+      await pendingEdit.catch(() => {
+        // ignore
+      });
     },
+    dispose,
   };
 }
 

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed a streaming race where late preview edits could overwrite the finalized response and make the message tail look truncated.
+- Stream finalization now waits for in-flight preview edits to finish before sending the final output.
+
 ## [0.4.0] - 2026-02-26
 
 ### New Features
