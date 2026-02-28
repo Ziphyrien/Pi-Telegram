@@ -180,8 +180,35 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   commandGroup.command("abort", "中止当前操作", async (tgCtx) => {
     const key = chatKey(botKey, tgCtx.chat.id);
     const inst = pool.has(key);
-    if (inst?.alive && inst.busy) {
+    if (inst?.alive && inst.running) {
+      const queued = inst.queuedCount;
+      inst.abort();
+      await tgCtx.reply(
+        queued > 0
+          ? `🛑 已中止当前任务（队列保留 ${queued} 条）\n如需清空队列可用 /abortall`
+          : "🛑 已中止当前任务",
+      );
+    } else if (inst?.alive && inst.queuedCount > 0) {
+      // 理论上不会进入（queued>0 时 running 应为 true），保底处理。
+      const queued = inst.queuedCount;
       inst.abortAll();
+      await tgCtx.reply(`🛑 已取消队列 ${queued} 条`);
+    } else {
+      await tgCtx.reply("当前无操作");
+    }
+  });
+
+  commandGroup.command("abortall", "中止并清空队列", async (tgCtx) => {
+    const key = chatKey(botKey, tgCtx.chat.id);
+    const inst = pool.has(key);
+    if (inst?.alive && inst.busy) {
+      const queued = inst.queuedCount;
+      inst.abortAll();
+      await tgCtx.reply(
+        queued > 0
+          ? `🛑 已中止当前任务，并清空队列 ${queued} 条`
+          : "🛑 已中止当前任务",
+      );
     } else {
       await tgCtx.reply("当前无操作");
     }
