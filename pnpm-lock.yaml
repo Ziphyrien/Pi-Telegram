@@ -10,25 +10,25 @@ importers:
     dependencies:
       '@grammyjs/auto-chat-action':
         specifier: ^0.1.1
-        version: 0.1.1(grammy@1.40.0)
+        version: 0.1.1(grammy@1.41.0)
       '@grammyjs/auto-retry':
         specifier: ^2.0.2
-        version: 2.0.2(grammy@1.40.0)
+        version: 2.0.2(grammy@1.41.0)
       '@grammyjs/commands':
         specifier: ^1.2.0
-        version: 1.2.0(grammy@1.40.0)
+        version: 1.2.0(grammy@1.41.0)
       '@grammyjs/files':
         specifier: ^1.1.1
-        version: 1.2.0(grammy@1.40.0)
+        version: 1.2.0(grammy@1.41.0)
       '@grammyjs/hydrate':
         specifier: ^1.6.0
-        version: 1.6.0(grammy@1.40.0)
+        version: 1.6.0(grammy@1.41.0)
       '@grammyjs/menu':
         specifier: ^1.3.1
-        version: 1.3.1(grammy@1.40.0)
+        version: 1.3.1(grammy@1.41.0)
       '@grammyjs/runner':
         specifier: ^2.0.3
-        version: 2.0.3(grammy@1.40.0)
+        version: 2.0.3(grammy@1.41.0)
       '@mariozechner/pi-coding-agent':
         specifier: ^0.55.0
         version: 0.55.1(ws@8.19.0)(zod@3.25.76)
@@ -43,7 +43,7 @@ importers:
         version: 9.1.0
       grammy:
         specifier: ^1.35.0
-        version: 1.40.0
+        version: 1.41.0
       markdown-it:
         specifier: ^14.1.1
         version: 14.1.1
@@ -420,8 +420,8 @@ packages:
     peerDependencies:
       grammy: ^1.13.1
 
-  '@grammyjs/types@3.24.0':
-    resolution: {integrity: sha512-qQIEs4lN5WqUdr4aT8MeU6UFpMbGYAvcvYSW1A4OO1PABGJQHz/KLON6qvpf+5RxaNDQBxiY2k2otIhg/AG7RQ==}
+  '@grammyjs/types@3.25.0':
+    resolution: {integrity: sha512-iN9i5p+8ZOu9OMxWNcguojQfz4K/PDyMPOnL7PPCON+SoA/F8OKMH3uR7CVUkYfdNe0GCz8QOzAWrnqusQYFOg==}
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
@@ -449,30 +449,35 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-arm64-musl@0.3.2':
     resolution: {integrity: sha512-0/Gi5Xq2V6goXBop19ePoHvXsmJD9SzFlO3S+d6+T2b+BlPcpOu3Oa0wTjl+cZrLAAEzA86aPNBI+VVAFDFPKw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@mariozechner/clipboard-linux-riscv64-gnu@0.3.2':
     resolution: {integrity: sha512-2AFFiXB24qf0zOZsxI1GJGb9wQGlOJyN6UwoXqmKS3dpQi/l6ix30IzDDA4c4ZcCcx4D+9HLYXhC1w7Sov8pXA==}
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-x64-gnu@0.3.2':
     resolution: {integrity: sha512-v6fVnsn7WMGg73Dab8QMwyFce7tzGfgEixKgzLP8f1GJqkJZi5zO4k4FOHzSgUufgLil63gnxvMpjWkgfeQN7A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-x64-musl@0.3.2':
     resolution: {integrity: sha512-xVUtnoMQ8v2JVyfJLKKXACA6avdnchdbBkTsZs8BgJQo29qwCp5NIHAUO8gbJ40iaEGToW5RlmVk2M9V0HsHEw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@mariozechner/clipboard-win32-arm64-msvc@0.3.2':
     resolution: {integrity: sha512-AEgg95TNi8TGgak2wSXZkXKCvAUTjWoU1Pqb0ON7JHrX78p616XUFNTJohtIon3e0w6k0pYPZeCuqRCza/Tqeg==}
@@ -1069,8 +1074,8 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  grammy@1.40.0:
-    resolution: {integrity: sha512-ssuE7fc1AwqlUxHr931OCVW3fU+oFDjHZGgvIedPKXfTdjXvzP19xifvVGCnPtYVUig1Kz+gwxe4A9M5WdkT4Q==}
+  grammy@1.41.0:
+    resolution: {integrity: sha512-CAAu74SLT+/QCg40FBhUuYJalVsxxCN3D0c31TzhFBsWWTdXrMXYjGsKngBdfvN6hQ/VzHczluj/ugZVetFNCQ==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
   has-flag@4.0.0:
@@ -2006,40 +2011,40 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@grammyjs/auto-chat-action@0.1.1(grammy@1.40.0)':
+  '@grammyjs/auto-chat-action@0.1.1(grammy@1.41.0)':
     dependencies:
-      grammy: 1.40.0
+      grammy: 1.41.0
 
-  '@grammyjs/auto-retry@2.0.2(grammy@1.40.0)':
+  '@grammyjs/auto-retry@2.0.2(grammy@1.41.0)':
     dependencies:
       debug: 4.4.3
-      grammy: 1.40.0
+      grammy: 1.41.0
     transitivePeerDependencies:
       - supports-color
 
-  '@grammyjs/commands@1.2.0(grammy@1.40.0)':
+  '@grammyjs/commands@1.2.0(grammy@1.41.0)':
     dependencies:
-      grammy: 1.40.0
+      grammy: 1.41.0
 
-  '@grammyjs/files@1.2.0(grammy@1.40.0)':
+  '@grammyjs/files@1.2.0(grammy@1.41.0)':
     dependencies:
-      grammy: 1.40.0
+      grammy: 1.41.0
 
-  '@grammyjs/hydrate@1.6.0(grammy@1.40.0)':
-    dependencies:
-      abort-controller: 3.0.0
-      grammy: 1.40.0
-
-  '@grammyjs/menu@1.3.1(grammy@1.40.0)':
-    dependencies:
-      grammy: 1.40.0
-
-  '@grammyjs/runner@2.0.3(grammy@1.40.0)':
+  '@grammyjs/hydrate@1.6.0(grammy@1.41.0)':
     dependencies:
       abort-controller: 3.0.0
-      grammy: 1.40.0
+      grammy: 1.41.0
 
-  '@grammyjs/types@3.24.0': {}
+  '@grammyjs/menu@1.3.1(grammy@1.41.0)':
+    dependencies:
+      grammy: 1.41.0
+
+  '@grammyjs/runner@2.0.3(grammy@1.41.0)':
+    dependencies:
+      abort-controller: 3.0.0
+      grammy: 1.41.0
+
+  '@grammyjs/types@3.25.0': {}
 
   '@isaacs/cliui@8.0.2':
     dependencies:
@@ -2857,9 +2862,9 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  grammy@1.40.0:
+  grammy@1.41.0:
     dependencies:
-      '@grammyjs/types': 3.24.0
+      '@grammyjs/types': 3.25.0
       abort-controller: 3.0.0
       debug: 4.4.3
       node-fetch: 2.7.0
