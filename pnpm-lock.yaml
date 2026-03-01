@@ -16,7 +16,7 @@ importers:
         version: 2.0.2(grammy@1.40.0)
       '@grammyjs/commands':
         specifier: ^1.2.0
-        version: 1.2.0(grammy@1.40.0)
+        version: 1.3.2(grammy@1.40.0)
       '@grammyjs/files':
         specifier: ^1.1.1
         version: 1.2.0(grammy@1.40.0)
@@ -391,8 +391,8 @@ packages:
     peerDependencies:
       grammy: ^1.10.0
 
-  '@grammyjs/commands@1.2.0':
-    resolution: {integrity: sha512-np3uZElWtVIQk8w73szBXcubuKFOEGnp+4dHyhw+KeVsN/yVwuaEAxt+kyEhfTUQdNH0zU7ffuCM2l7lVUDBWw==}
+  '@grammyjs/commands@1.3.2':
+    resolution: {integrity: sha512-cYqEV/bMcWrXy+8oI5bjxQPM3Hkgjc9QbbwKo7I23x+qMBFsiNDVIIbIH7Ma4nu/reqOUVxgAh5NPHEyYLZbNw==}
     peerDependencies:
       grammy: ^1.17.1
 
@@ -449,30 +449,35 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-arm64-musl@0.3.2':
     resolution: {integrity: sha512-0/Gi5Xq2V6goXBop19ePoHvXsmJD9SzFlO3S+d6+T2b+BlPcpOu3Oa0wTjl+cZrLAAEzA86aPNBI+VVAFDFPKw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@mariozechner/clipboard-linux-riscv64-gnu@0.3.2':
     resolution: {integrity: sha512-2AFFiXB24qf0zOZsxI1GJGb9wQGlOJyN6UwoXqmKS3dpQi/l6ix30IzDDA4c4ZcCcx4D+9HLYXhC1w7Sov8pXA==}
     engines: {node: '>= 10'}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-x64-gnu@0.3.2':
     resolution: {integrity: sha512-v6fVnsn7WMGg73Dab8QMwyFce7tzGfgEixKgzLP8f1GJqkJZi5zO4k4FOHzSgUufgLil63gnxvMpjWkgfeQN7A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@mariozechner/clipboard-linux-x64-musl@0.3.2':
     resolution: {integrity: sha512-xVUtnoMQ8v2JVyfJLKKXACA6avdnchdbBkTsZs8BgJQo29qwCp5NIHAUO8gbJ40iaEGToW5RlmVk2M9V0HsHEw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@mariozechner/clipboard-win32-arm64-msvc@0.3.2':
     resolution: {integrity: sha512-AEgg95TNi8TGgak2wSXZkXKCvAUTjWoU1Pqb0ON7JHrX78p616XUFNTJohtIon3e0w6k0pYPZeCuqRCza/Tqeg==}
@@ -2017,7 +2022,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@grammyjs/commands@1.2.0(grammy@1.40.0)':
+  '@grammyjs/commands@1.3.2(grammy@1.40.0)':
     dependencies:
       grammy: 1.40.0
 
