@@ -12,8 +12,7 @@
     "start": "node dist/main.js",
     "dev": "tsx --watch src/main.ts",
     "pitg": "node dist/main.js",
-    "prepublishOnly": "npm run build",
-    "release": "commit-and-tag-version"
+    "prepublishOnly": "npm run build"
   },
   "bin": {
     "pitg": "dist/main.js"
@@ -37,7 +36,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "commit-and-tag-version": "^12.6.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
