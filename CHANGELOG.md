@@ -2,14 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed a streaming race where late preview edits could overwrite the finalized response and make the message tail look truncated.
-- Stream finalization now waits for in-flight preview edits to finish before sending the final output.
-- Fixed `/abort` behavior with queued messages: it now aborts only the current running task instead of clearing the whole queue.
-- Added `/abortall` to explicitly abort current task and clear queued tasks when needed.
-- When a streaming response fails mid-way, Telegram message now keeps the generated partial content and appends an interruption warning instead of replacing everything with a plain error.
-
 ## [0.4.0] - 2026-02-26
 
 ### New Features
