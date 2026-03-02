@@ -1,6 +1,23 @@
 # Changelog
 
-## [Unreleased]
+All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
+
+## 0.4.1 (2026-03-02)
+
+
+### Features
+
+* add persistent cron scheduler and /cron commands ([e751e2f](https://github.com/Ziphyrien/Pi-Telegram/commit/e751e2fd1a3d646cb47a9bcbd0505b16f7bccf78))
+* integrate @grammyjs/files and include file paths in context ([2d4845c](https://github.com/Ziphyrien/Pi-Telegram/commit/2d4845ca3a5e3615727bb5b5a01b89f6cd1598df))
+
+
+### Bug Fixes
+
+* avoid streaming preview/finalize edit race ([d2984f0](https://github.com/Ziphyrien/Pi-Telegram/commit/d2984f04b63c06c57c7078dd46dd729bd74e8aa4))
+* ignore Telegram message-not-modified during streaming edits ([dabb68b](https://github.com/Ziphyrien/Pi-Telegram/commit/dabb68bfe7d0ab9875e47458defceccd2c03f726))
+* keep partial streamed output when generation errors ([6d44958](https://github.com/Ziphyrien/Pi-Telegram/commit/6d4495868bd7328adb30147346f5f66df30f029e))
+* make /abort keep queue and add /abortall ([19f0a7a](https://github.com/Ziphyrien/Pi-Telegram/commit/19f0a7afbb4b2642c3d74e8a4758a38f787e4a22))
+* prevent raw protocol/markdown leak on HTML fallback ([7d25467](https://github.com/Ziphyrien/Pi-Telegram/commit/7d2546702c8fdad4f8252da47fd7dab50b6b05dc))
 
 ## [0.4.0] - 2026-02-26
 

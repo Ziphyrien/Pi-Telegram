@@ -1,6 +1,6 @@
 {
   "name": "@ziphyrien/pi-telegram",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Pi-Telegram: Bridge Telegram bots to pi coding agent via RPC",
   "type": "module",
   "files": [
@@ -13,7 +13,7 @@
     "dev": "tsx --watch src/main.ts",
     "pitg": "node dist/main.js",
     "prepublishOnly": "npm run build",
-    "release": "commit-and-tag-version"    
+    "release": "commit-and-tag-version"
   },
   "bin": {
     "pitg": "dist/main.js"
