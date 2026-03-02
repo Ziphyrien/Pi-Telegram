@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Release script for pi-mono
+ * Release script for pi-telegram
  *
  * Usage: node scripts/release.mjs <major|minor|patch>
  *
@@ -14,8 +14,7 @@
  */
 
 import { execSync } from "child_process";
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 
 const BUMP_TYPE = process.argv[2];
 
@@ -38,37 +37,35 @@ function run(cmd, options = {}) {
 }
 
 function getVersion() {
-	const pkg = JSON.parse(readFileSync("packages/ai/package.json", "utf-8"));
+	const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 	return pkg.version;
 }
 
-function getChangelogs() {
-	const packagesDir = "packages";
-	const packages = readdirSync(packagesDir);
-	return packages
-		.map((pkg) => join(packagesDir, pkg, "CHANGELOG.md"))
-		.filter((path) => existsSync(path));
+function getChangelogPath() {
+	const changelog = "CHANGELOG.md";
+	if (!existsSync(changelog)) {
+		console.error("Error: CHANGELOG.md not found in project root.");
+		process.exit(1);
+	}
+	return changelog;
 }
 
 function updateChangelogsForRelease(version) {
 	const date = new Date().toISOString().split("T")[0];
-	const changelogs = getChangelogs();
+	const changelog = getChangelogPath();
+	const content = readFileSync(changelog, "utf-8");
 
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-
-		if (!content.includes("## [Unreleased]")) {
-			console.log(`  Skipping ${changelog}: no [Unreleased] section`);
-			continue;
-		}
-
-		const updated = content.replace(
-			"## [Unreleased]",
-			`## [Unreleased]\n\n## [${version}] - ${date}`
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Updated ${changelog}`);
+	if (!content.includes("## [Unreleased]")) {
+		console.error(`Error: ${changelog} has no [Unreleased] section`);
+		process.exit(1);
 	}
+
+	const updated = content.replace(
+		"## [Unreleased]",
+		`## [Unreleased]\n\n## [${version}] - ${date}`
+	);
+	writeFileSync(changelog, updated);
+	console.log(`  Updated ${changelog}`);
 }
 
 // Main flow
