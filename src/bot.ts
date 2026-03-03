@@ -737,6 +737,28 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   type PromptBuildOptions = { supportsImages: boolean };
 
   const imageSupportCache = new Map<number, { value: boolean; at: number }>();
+  const draftCounterByChat = new Map<number, number>();
+
+  function nextDraftId(chatId: number): number {
+    const prev = draftCounterByChat.get(chatId) ?? 0;
+    // Keep draft_id in a safe positive 31-bit range.
+    const next = prev >= 2_000_000_000 ? 1 : prev + 1;
+    draftCounterByChat.set(chatId, next);
+    return next;
+  }
+
+  function getMessageThreadId(tgCtx: BotContext): number | undefined {
+    const raw = Number((tgCtx.message as any)?.message_thread_id);
+    if (!Number.isSafeInteger(raw) || raw <= 0) return undefined;
+    return raw;
+  }
+
+  function shouldUseDraftStreaming(tgCtx: BotContext): boolean {
+    const chat = tgCtx.chat as any;
+    if (!chat) return false;
+    // Bot API currently supports draft streaming for private chats.
+    return chat.type === "private";
+  }
 
   async function supportsImagesForChat(
     chatId: number,
@@ -1096,17 +1118,23 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     makePayload: (opts: PromptBuildOptions) => Promise<PromptPayload>,
   ): Promise<void> => {
     const ahead = inst.queuedCount + (inst.running ? 1 : 0);
+    const chatId = tgCtx.chat?.id ?? 0;
+    const useStream = menus.isStreamEnabled(chatId);
+    const useDraftStream = useStream && shouldUseDraftStreaming(tgCtx);
+
     const initialStatus = ahead > 0
       ? `⏳ 排队中（前方 ${ahead} 条）...`
       : "⏳ 思考中...";
-    const status = await tgCtx.reply(initialStatus);
+    const status = !useStream
+      ? await tgCtx.reply(initialStatus)
+      : null;
 
-    const chatId = tgCtx.chat?.id ?? 0;
-    const useStream = menus.isStreamEnabled(chatId);
     let streamedText = "";
     tgCtx.chatAction = "typing";
+
     const onStart = ahead > 0
       ? () => {
+        if (!status) return;
         void status.editText("⏳ 思考中...").catch(() => {});
       }
       : undefined;
@@ -1117,9 +1145,19 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       const promptMessage = message;
 
       if (useStream) {
-        const stream = createStreamUpdater(status, maxResponseLength, (err) => {
-          log.warn(`chat${chatId} 流式 HTML 预览失败，降级纯文本：${describeTelegramSendError(err)}`);
-        });
+        const stream = useDraftStream
+          ? createDraftStreamUpdater(
+            tgCtx.api,
+            chatId,
+            nextDraftId(chatId),
+            getMessageThreadId(tgCtx),
+            maxResponseLength,
+            (err) => {
+              log.warn(`chat${chatId} sendMessageDraft 预览失败，已降级跳过：${describeTelegramSendError(err)}`);
+            },
+          )
+          : createSilentStreamUpdater();
+
         try {
           const result = await inst.prompt(promptMessage, images, {
             onStart,
@@ -1130,36 +1168,45 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             onToolStart: stream.onToolStart,
             onToolError: stream.onToolError,
           });
+
           await stream.stopAndWait();
           const processed = await applyCronToolDirectives(tgCtx, result.text);
-          await finalizeReply(
-            status,
-            tgCtx,
-            processed.text,
-            result.tools,
-            maxResponseLength,
-            processed.warnings,
-          );
+
+          await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
         } finally {
           await stream.stopAndWait();
         }
+
         return;
       }
 
       const result = await inst.prompt(promptMessage, images, { onStart });
-      await status.delete().catch(() => {});
+      await status?.delete().catch(() => {});
       const processed = await applyCronToolDirectives(tgCtx, result.text);
       await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message === "aborted") {
-        await reportStatusOrReply(tgCtx, status, "🛑 已中止");
+        if (status) {
+          await reportStatusOrReply(tgCtx, status, "🛑 已中止");
+        } else {
+          await tgCtx.reply("🛑 已中止").catch(() => {});
+        }
       } else if (useStream && streamedText.trim()) {
         const errLine = `⚠️ 生成中断：${truncate(message, 300)}`;
         const merged = truncate(`${streamedText}\n\n${errLine}`, maxResponseLength);
-        await reportStatusOrReply(tgCtx, status, merged);
+        if (status) {
+          await reportStatusOrReply(tgCtx, status, merged);
+        } else {
+          await tgCtx.reply(merged).catch(() => {});
+        }
       } else {
-        await reportStatusOrReply(tgCtx, status, `❌ 错误：${message}`);
+        const errorText = `❌ 错误：${message}`;
+        if (status) {
+          await reportStatusOrReply(tgCtx, status, errorText);
+        } else {
+          await tgCtx.reply(errorText).catch(() => {});
+        }
       }
     } finally {
       tgCtx.chatAction = null;
@@ -1617,6 +1664,14 @@ function isTextMustBeNonEmptyError(err: unknown): boolean {
   return text.includes("text must be non-empty");
 }
 
+function isSendMessageDraftUnsupportedError(err: unknown): boolean {
+  const text = describeTelegramSendError(err).toLowerCase();
+  if (text.includes("sendmessagedraft")) return true;
+  if (text.includes("method not found")) return true;
+  if (text.includes("not implemented")) return true;
+  return false;
+}
+
 interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
@@ -1722,50 +1777,86 @@ interface StreamUpdater {
   dispose: () => void;
 }
 
-function createStreamUpdater(
-  status: { editText: (text: string, other?: Record<string, unknown>) => Promise<unknown> },
+async function callSendMessageDraft(
+  api: BotContext["api"],
+  chatId: number,
+  draftId: number,
+  text: string,
+  messageThreadId?: number,
+): Promise<void> {
+  const other = Number.isSafeInteger(messageThreadId) && (messageThreadId as number) > 0
+    ? { message_thread_id: messageThreadId as number }
+    : undefined;
+
+  const apiAny = api as any;
+
+  if (typeof apiAny.sendMessageDraft === "function") {
+    await apiAny.sendMessageDraft(chatId, draftId, text, other);
+    return;
+  }
+
+  if (typeof apiAny?.raw?.sendMessageDraft === "function") {
+    await apiAny.raw.sendMessageDraft({
+      chat_id: chatId,
+      draft_id: draftId,
+      text,
+      ...(other ?? {}),
+    });
+    return;
+  }
+
+  throw new Error("sendMessageDraft not supported by current grammY version");
+}
+
+function createDraftStreamUpdater(
+  api: BotContext["api"],
+  chatId: number,
+  draftId: number,
+  messageThreadId: number | undefined,
   maxLen: number,
-  onHtmlFallback?: (err: unknown) => void,
+  onDraftFallback?: (err: unknown) => void,
 ): StreamUpdater {
   const minEditIntervalMs = 700;
-  // Reserve room for HTML tags/entities during streaming render
-  const safeLimit = Math.min(Math.max(200, maxLen - 1000), 2800);
+  // Must stay within Bot API text limit (4096)
+  const safeLimit = Math.min(Math.max(200, maxLen - 600), 3800);
   let text = "";
   const tools: string[] = [];
   let lastRendered = "";
   let lastEditAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  let disabled = false;
   let pendingEdit: Promise<void> = Promise.resolve();
 
   const render = () => {
-    if (disposed) return;
+    if (disposed || disabled) return;
+
     const preview = buildStreamingPreview(text, tools, safeLimit);
     if (!preview) return;
 
-    const plainPreview = mdToPlainText(preview).trim();
-    if (!plainPreview || plainPreview === "(无回复)") return;
+    let draftText = mdToPlainText(preview).trim();
+    if (!draftText || draftText === "(无回复)") return;
+    if (draftText.length > 4096) {
+      draftText = `${draftText.slice(0, 4095)}…`;
+    }
 
-    const html = mdToTgHtml(preview);
-    if (html === lastRendered) return;
+    if (draftText === lastRendered) return;
 
-    lastRendered = html;
+    lastRendered = draftText;
     lastEditAt = Date.now();
 
     pendingEdit = pendingEdit
       .then(async () => {
-        if (disposed) return;
+        if (disposed || disabled) return;
         try {
-          await status.editText(html, { parse_mode: "HTML" });
+          await callSendMessageDraft(api, chatId, draftId, draftText, messageThreadId);
         } catch (err) {
           if (isMessageNotModifiedError(err)) return;
           if (isTextMustBeNonEmptyError(err)) return;
-          try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
-          try {
-            await status.editText(plainPreview);
-          } catch {
-            // ignore fallback failure
+          if (isSendMessageDraftUnsupportedError(err)) {
+            disabled = true;
           }
+          try { onDraftFallback?.(err); } catch { /* ignore callback error */ }
         }
       })
       .catch(() => {
@@ -1774,7 +1865,7 @@ function createStreamUpdater(
   };
 
   const scheduleRender = () => {
-    if (disposed) return;
+    if (disposed || disabled) return;
     const wait = minEditIntervalMs - (Date.now() - lastEditAt);
     if (wait <= 0) {
       render();
@@ -1820,6 +1911,16 @@ function createStreamUpdater(
       });
     },
     dispose,
+  };
+}
+
+function createSilentStreamUpdater(): StreamUpdater {
+  return {
+    onTextDelta: () => {},
+    onToolStart: () => {},
+    onToolError: () => {},
+    stopAndWait: async () => {},
+    dispose: () => {},
   };
 }
 
@@ -2038,64 +2139,6 @@ async function sendOneAttachment(
     if (method === "replyWithDocument") throw err;
     await REPLY_SENDER.replyWithDocument(tgCtx, att.media, other);
   }
-}
-
-async function finalizeReply(
-  status: {
-    message_id?: number;
-    editText: (text: string, other?: Record<string, unknown>) => Promise<unknown>;
-    delete: () => Promise<unknown>;
-  },
-  tgCtx: BotContext,
-  text: string,
-  tools: string[],
-  maxLen: number,
-  extraWarnings: string[] = [],
-): Promise<void> {
-  const prepared = prepareReply(tgCtx, text, tools, extraWarnings);
-  const hasBody = prepared.body.trim().length > 0;
-  const hasReplyTarget = !!prepared.replyParameters;
-
-  if (!hasBody) {
-    await status.delete().catch(() => {});
-    await sendAttachments(
-      tgCtx,
-      prepared.attachments,
-      prepared.warnings,
-      prepared.replyParameters,
-    );
-    return;
-  }
-
-  const parts = splitMessage(prepared.body, maxLen);
-
-  // Keep the streamed message as final output if it fits in one message
-  // but only when no reply target is requested.
-  if (!hasReplyTarget && parts.length === 1) {
-    const html = mdToTgHtml(parts[0]);
-    try {
-      await status.editText(html, { parse_mode: "HTML" });
-      if (typeof status.message_id === "number") {
-        rememberReplyMessage(replyScopeKey(tgCtx), "self", status.message_id, parts[0]);
-      }
-      await sendAttachments(tgCtx, prepared.attachments, prepared.warnings);
-      return;
-    } catch (err) {
-      if (isMessageNotModifiedError(err)) {
-        if (typeof status.message_id === "number") {
-          rememberReplyMessage(replyScopeKey(tgCtx), "self", status.message_id, parts[0]);
-        }
-        await sendAttachments(tgCtx, prepared.attachments, prepared.warnings);
-        return;
-      }
-
-      log.warn(`chat${tgCtx.chat?.id ?? 0} 流式收尾 HTML 失败，走常规发送：${describeTelegramSendError(err)}`);
-      // fallback to normal send path
-    }
-  }
-
-  await status.delete().catch(() => {});
-  await sendPreparedReply(tgCtx, prepared, maxLen);
 }
 
 async function sendReply(
