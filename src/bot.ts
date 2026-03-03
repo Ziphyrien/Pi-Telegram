@@ -1612,6 +1612,11 @@ function isMessageNotModifiedError(err: unknown): boolean {
   return text.includes("message is not modified");
 }
 
+function isTextMustBeNonEmptyError(err: unknown): boolean {
+  const text = describeTelegramSendError(err).toLowerCase();
+  return text.includes("text must be non-empty");
+}
+
 interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
@@ -1738,6 +1743,9 @@ function createStreamUpdater(
     const preview = buildStreamingPreview(text, tools, safeLimit);
     if (!preview) return;
 
+    const plainPreview = mdToPlainText(preview).trim();
+    if (!plainPreview || plainPreview === "(无回复)") return;
+
     const html = mdToTgHtml(preview);
     if (html === lastRendered) return;
 
@@ -1751,10 +1759,10 @@ function createStreamUpdater(
           await status.editText(html, { parse_mode: "HTML" });
         } catch (err) {
           if (isMessageNotModifiedError(err)) return;
+          if (isTextMustBeNonEmptyError(err)) return;
           try { onHtmlFallback?.(err); } catch { /* ignore callback error */ }
-          const plain = mdToPlainText(preview);
           try {
-            await status.editText(plain);
+            await status.editText(plainPreview);
           } catch {
             // ignore fallback failure
           }
