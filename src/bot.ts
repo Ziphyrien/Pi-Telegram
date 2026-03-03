@@ -347,69 +347,47 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     | { kind: "at" | "every" | "cron"; startedAt: number }
     | { kind: "rename"; jobId: string; startedAt: number };
   const cronPendingInput = new Map<number, CronPendingInput>();
+  const cronMenuPageByChat = new Map<number, number>();
+  const cronMenuMessageByChat = new Map<number, number>();
   const cronRootMenuId = `cron-menu-${botIndex}`;
-  const cronJobSubmenuIds = new Set<string>();
+  const CRON_MENU_PAGE_SIZE = 6;
 
-  const ensureCronJobSubmenu = (jobId: string, root: Menu<BotContext>): string => {
-    const subId = `cron-job-${botIndex}-${jobId}`;
-    if (cronJobSubmenuIds.has(subId)) return subId;
-    cronJobSubmenuIds.add(subId);
+  const buildCronMenuTitle = (chatId: number): string => {
+    const pending = cronPendingInput.get(chatId);
+    const hint = pending
+      ? `\n当前等待输入：${pending.kind}（请直接发送文本，或在菜单中取消）`
+      : "";
+    return `⏰ 定时任务菜单${hint}`;
+  };
 
-    const sub = new Menu<BotContext>(subId, {
-      onMenuOutdated: "菜单已更新，请重试",
-      fingerprint: (ctx) => {
-        const chatId = ctx.chat?.id ?? 0;
-        const job = cron.get(jobId);
-        if (!job || job.chatId !== chatId) return "missing";
-        return [
-          `enabled:${job.enabled ? 1 : 0}`,
-          `running:${job.state.runningRunId ? 1 : 0}`,
-          `next:${job.state.nextRunAtMs}`,
-          `updated:${job.updatedAtMs}`,
-        ].join("|");
-      },
-    }).dynamic((ctx, range) => {
-      const chatId = ctx.chat?.id ?? 0;
-      const job = cron.get(jobId);
+  const setCronMenuPage = (chatId: number, page: number, totalPages: number): number => {
+    const safeTotal = Math.max(1, totalPages);
+    const next = Math.max(0, Math.min(page, safeTotal - 1));
+    cronMenuPageByChat.set(chatId, next);
+    return next;
+  };
 
-      if (!job || job.chatId !== chatId) {
-        range.text("⚠️ 任务不存在或无权限", (ctx) => ctx.answerCallbackQuery({ text: "任务不存在" })).row();
-        range.back("⬅️ 返回", (ctx) => ctx.answerCallbackQuery());
+  const upsertCronMenuMessage = async (chatId: number): Promise<void> => {
+    const text = buildCronMenuTitle(chatId);
+    const existingId = cronMenuMessageByChat.get(chatId);
+
+    if (existingId) {
+      try {
+        await bot.api.editMessageText(chatId, existingId, text, { reply_markup: cronMenu });
         return;
+      } catch (err) {
+        if (!isMessageNotModifiedError(err)) {
+          cronMenuMessageByChat.delete(chatId);
+        }
       }
+    }
 
-      const running = job.state.runningRunId ? "⏳ 运行中" : "🟢 空闲";
-      range.text(`${job.enabled ? "✅" : "⏸"} ${truncate(job.name, 24)}`, (ctx) =>
-        ctx.answerCallbackQuery({ text: `${running} | ${formatCronSchedule(job.schedule)}` }),
-      ).row();
-
-      range.text(job.enabled ? "⏸ 停用" : "▶️ 启用", async (ctx) => {
-        await cron.setEnabled(job.id, !job.enabled);
-        try { ctx.menu.update(); } catch { /* ignore */ }
-        await ctx.answerCallbackQuery({ text: job.enabled ? "已停用" : "已启用" });
-      });
-
-      range.text("▶️ 立即执行", async (ctx) => {
-        const ok = await cron.runNow(job.id);
-        await ctx.answerCallbackQuery({ text: ok ? "已加入执行队列" : "加入失败" });
-      });
-
-      range.text("✏️ 重命名", async (ctx) => {
-        cronPendingInput.set(chatId, { kind: "rename", jobId: job.id, startedAt: Date.now() });
-        await ctx.answerCallbackQuery({ text: "请发送新名称" });
-        await ctx.reply(`✏️ 请发送任务 ${job.id} 的新名称`);
-      }).row();
-
-      range.text("🗑 删除", async (ctx) => {
-        await cron.remove(job.id);
-        await ctx.answerCallbackQuery({ text: "已删除" });
-      }).row();
-
-      range.back("⬅️ 返回", (ctx) => ctx.answerCallbackQuery());
-    });
-
-    root.register(sub);
-    return subId;
+    try {
+      const sent = await bot.api.sendMessage(chatId, text, { reply_markup: cronMenu });
+      cronMenuMessageByChat.set(chatId, sent.message_id);
+    } catch {
+      // ignore
+    }
   };
 
   const cronMenu = new Menu<BotContext>(cronRootMenuId, {
@@ -418,22 +396,36 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       const chatId = ctx.chat?.id ?? 0;
       const st = cron.status(chatId);
       const pending = cronPendingInput.get(chatId);
-      const jobs = cron.list(chatId).slice(0, 30)
-        .map((x) => `${x.id}:${x.enabled ? 1 : 0}:${x.updatedAtMs}`)
+      const page = cronMenuPageByChat.get(chatId) ?? 0;
+      const jobs = cron.list(chatId)
+        .slice(0, 60)
+        .map((x) => `${x.id}:${x.enabled ? 1 : 0}:${x.updatedAtMs}:${x.state.runningRunId ? 1 : 0}`)
         .join(",");
       return [
         `enabled:${st.enabled ? 1 : 0}`,
         `total:${st.totalJobs}`,
         `queued:${st.queuedJobs}`,
+        `running:${st.runningJobs}`,
         `pending:${pending?.kind ?? ""}`,
+        `page:${page}`,
         jobs,
       ].join("|");
     },
   }).dynamic((ctx, range) => {
     const chatId = ctx.chat?.id ?? 0;
+    const menuMessageId = Number((ctx.msg as any)?.message_id);
+    if (Number.isSafeInteger(menuMessageId) && menuMessageId > 0) {
+      cronMenuMessageByChat.set(chatId, menuMessageId);
+    }
     const st = cron.status(chatId);
     const jobs = cron.list(chatId);
     const pending = cronPendingInput.get(chatId);
+
+    const totalPages = Math.max(1, Math.ceil(jobs.length / CRON_MENU_PAGE_SIZE));
+    const rawPage = cronMenuPageByChat.get(chatId) ?? 0;
+    const page = setCronMenuPage(chatId, rawPage, totalPages);
+    const start = page * CRON_MENU_PAGE_SIZE;
+    const pageJobs = jobs.slice(start, start + CRON_MENU_PAGE_SIZE);
 
     range.text(
       `📊 ${st.enabled ? "开启" : "关闭"} | 任务 ${st.totalJobs} | 运行 ${st.runningJobs} | 队列 ${st.queuedJobs}`,
@@ -480,18 +472,57 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       return;
     }
 
-    const maxShow = Math.min(20, jobs.length);
-    for (let i = 0; i < maxShow; i += 1) {
-      const job = jobs[i];
-      const subId = ensureCronJobSubmenu(job.id, cronMenu);
+    range.text(`📄 第 ${page + 1}/${totalPages} 页`, (ctx) =>
+      ctx.answerCallbackQuery({ text: `本页 ${pageJobs.length} 条` }),
+    ).row();
+
+    for (const job of pageJobs) {
       const icon = job.enabled ? "🟢" : "⚪";
-      range.submenu(`${icon} ${truncate(job.name, 18)} [${job.id}]`, subId, (ctx) => ctx.answerCallbackQuery()).row();
+      const running = job.state.runningRunId ? " ⏳" : "";
+      range.text(`${icon}${running} ${truncate(job.name, 18)} [${job.id}]`, (ctx) =>
+        ctx.answerCallbackQuery({ text: `${formatCronSchedule(job.schedule)} | next=${formatDateTime(job.state.nextRunAtMs)}`.slice(0, 190) }),
+      ).row();
+
+      range.text(job.enabled ? "⏸ 停用" : "▶️ 启用", async (ctx) => {
+        await cron.setEnabled(job.id, !job.enabled);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: job.enabled ? "已停用" : "已启用" });
+      });
+
+      range.text("▶️ 执行", async (ctx) => {
+        const ok = await cron.runNow(job.id);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: ok ? "已加入执行队列" : "加入失败" });
+      });
+
+      range.text("✏️ 改名", async (ctx) => {
+        cronPendingInput.set(chatId, { kind: "rename", jobId: job.id, startedAt: Date.now() });
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: "请发送新名称" });
+        await ctx.reply(`✏️ 请发送任务 ${job.id} 的新名称`);
+      }).row();
+
+      range.text("🗑 删除", async (ctx) => {
+        await cron.remove(job.id);
+        const nextTotalPages = Math.max(1, Math.ceil(Math.max(0, jobs.length - 1) / CRON_MENU_PAGE_SIZE));
+        setCronMenuPage(chatId, page, nextTotalPages);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: "已删除" });
+      }).row();
     }
 
-    if (jobs.length > maxShow) {
-      range.text(`还有 ${jobs.length - maxShow} 个任务未显示`, (ctx) =>
-        ctx.answerCallbackQuery({ text: "任务较多，请用 /cron list 查看全部" }),
-      );
+    if (totalPages > 1) {
+      range.text("⬅️ 上一页", async (ctx) => {
+        setCronMenuPage(chatId, page - 1, totalPages);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: `第 ${Math.max(1, page)} 页` });
+      });
+
+      range.text("➡️ 下一页", async (ctx) => {
+        setCronMenuPage(chatId, page + 1, totalPages);
+        try { ctx.menu.update(); } catch { /* ignore */ }
+        await ctx.answerCallbackQuery({ text: `第 ${Math.min(totalPages, page + 2)} 页` });
+      }).row();
     }
   });
 
@@ -507,12 +538,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       const chatId = tgCtx.chat.id;
 
       if (!raw.trim()) {
-        const pending = cronPendingInput.get(chatId);
-        const hint = pending
-          ? `\n当前等待输入：${pending.kind}（请直接发送文本，或在菜单中取消）`
-          : "";
         await ensureCronMenuReady(tgCtx);
-        await tgCtx.reply(`⏰ 定时任务菜单${hint}`, { reply_markup: cronMenu });
+        await upsertCronMenuMessage(chatId);
         return;
       }
 
@@ -938,14 +965,13 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
         const updated = await cron.rename(pending.jobId, raw);
         cronPendingInput.delete(chatId);
+        await upsertCronMenuMessage(chatId);
         if (!updated) {
-          await tgCtx.reply("❌ 重命名失败", { reply_markup: cronMenu });
+          await tgCtx.reply("❌ 重命名失败");
           return true;
         }
 
-        await tgCtx.reply(`✏️ 任务 ${updated.id} 已重命名为：${updated.name}`, {
-          reply_markup: cronMenu,
-        });
+        await tgCtx.reply(`✏️ 任务 ${updated.id} 已重命名为：${updated.name}`);
         return true;
       }
 
@@ -974,9 +1000,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         });
 
         cronPendingInput.delete(chatId);
-        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
-          reply_markup: cronMenu,
-        });
+        await upsertCronMenuMessage(chatId);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return true;
       }
 
@@ -1005,9 +1030,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         });
 
         cronPendingInput.delete(chatId);
-        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
-          reply_markup: cronMenu,
-        });
+        await upsertCronMenuMessage(chatId);
+        await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return true;
       }
 
@@ -1056,9 +1080,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       });
 
       cronPendingInput.delete(chatId);
-      await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`, {
-        reply_markup: cronMenu,
-      });
+      await upsertCronMenuMessage(chatId);
+      await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

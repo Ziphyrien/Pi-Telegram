@@ -29,9 +29,12 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
   const outdatedMenuText = opts.outdatedMenuText ?? "菜单已更新，请重试";
 
   const cachedModels = new Map<number, PiModelInfo[]>(); // chatId -> models
+  const modelCacheAt = new Map<number, number>();        // chatId -> cache timestamp
   const activeModelId = new Map<number, string>();       // chatId -> provider:modelId
   const activeThinkingLevel = new Map<number, string>(); // chatId -> thinking level
   const streamEnabled = new Map<number, boolean>();      // chatId -> stream mode
+
+  const MODEL_CACHE_TTL_MS = 30_000;
 
   for (const [chatIdStr, enabled] of Object.entries(opts.initialStreamByChat ?? {})) {
     const chatId = Number(chatIdStr);
@@ -95,6 +98,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
     const inst = pool.get(chatKey(chatId));
     const models = await inst.getAvailableModels();
     cachedModels.set(chatId, models);
+    modelCacheAt.set(chatId, Date.now());
 
     const providers = [...new Set(models.map((m) => m.provider))];
     for (const provider of providers) ensureProviderSub(provider);
@@ -107,9 +111,11 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
     return models;
   }
 
-  async function ensureModelsForChat(chatId: number): Promise<PiModelInfo[]> {
+  async function ensureModelsForChat(chatId: number, force = false): Promise<PiModelInfo[]> {
     const cached = cachedModels.get(chatId);
-    if (cached !== undefined) return cached;
+    const cachedAt = modelCacheAt.get(chatId) ?? 0;
+    const isFresh = Date.now() - cachedAt < MODEL_CACHE_TTL_MS;
+    if (!force && cached !== undefined && isFresh) return cached;
 
     const loading = modelsLoading.get(chatId);
     if (loading) return loading;
@@ -183,12 +189,26 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
       const chatId = ctx.chat?.id ?? 0;
       const models = await ensureModelsForChat(chatId);
       const providers = [...new Set(models.map((m) => m.provider))];
+
+      range.text("🔄 刷新模型列表", async (ctx) => {
+        const cid = ctx.chat?.id ?? 0;
+        try {
+          await refreshModelsForChat(cid);
+          try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
+          await ctx.answerCallbackQuery({ text: "模型列表已刷新" });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.answerCallbackQuery({ text: `❌ 刷新失败：${msg}`.slice(0, 180) });
+        }
+      }).row();
+
       if (!providers.length) {
         range.text("⚠️ 无可用模型（pi 未启动？）", (ctx) =>
           ctx.answerCallbackQuery({ text: "请先发一条消息启动 pi" }),
         );
         return;
       }
+
       for (const provider of providers) {
         ensureProviderSub(provider);
         const subId = `models-${botIndex}-${provider}`;
@@ -219,6 +239,19 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
         const chatId = ctx.chat?.id ?? 0;
         const models = await ensureModelsForChat(chatId);
         const current = activeModelId.get(chatId);
+
+        range.text("🔄 刷新", async (ctx) => {
+          const cid = ctx.chat?.id ?? 0;
+          try {
+            await refreshModelsForChat(cid);
+            try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
+            await ctx.answerCallbackQuery({ text: "已刷新" });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            await ctx.answerCallbackQuery({ text: `❌ 刷新失败：${msg}`.slice(0, 180) });
+          }
+        }).row();
+
         for (const mo of models) {
           if (mo.provider !== provider) continue;
           const keyOfModel = modelKey(mo.provider, mo.id);
@@ -232,15 +265,14 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
               return;
             }
 
-            const inst = pool.has(chatKey(cid));
-            if (inst?.alive) {
-              try {
-                await inst.rpcSetModel(mo.provider, mo.id);
-                activeModelId.set(cid, keyOfModel);
-              } catch (err) {
-                await ctx.answerCallbackQuery({ text: `❌ ${(err as Error).message}` });
-                return;
-              }
+            try {
+              const inst = pool.get(chatKey(cid));
+              await inst.rpcSetModel(mo.provider, mo.id);
+              activeModelId.set(cid, keyOfModel);
+              try { await refreshThinkingForChat(cid); } catch { /* ignore */ }
+            } catch (err) {
+              await ctx.answerCallbackQuery({ text: `❌ ${(err as Error).message}` });
+              return;
             }
 
             try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
@@ -319,6 +351,18 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
       }
 
       const current = await ensureThinkingForChat(chatId);
+
+      range.text("🔄 刷新状态", async (ctx) => {
+        const cid = ctx.chat?.id ?? 0;
+        try {
+          await refreshThinkingForChat(cid);
+          try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
+          await ctx.answerCallbackQuery({ text: "思考状态已刷新" });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await ctx.answerCallbackQuery({ text: `❌ 刷新失败：${msg}`.slice(0, 180) });
+        }
+      }).row();
 
       for (const level of thinkingLevels) {
         const check = current === level ? "✅ " : "";
