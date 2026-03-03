@@ -14,7 +14,7 @@
  */
 
 import { execSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, rmSync } from "fs";
 
 const args = process.argv.slice(2);
 
@@ -120,6 +120,59 @@ function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
 
+function hasCommand(command) {
+  try {
+    execSync(`${command} --version`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function detectPackageManager() {
+  if (existsSync("pnpm-lock.yaml") && hasCommand("pnpm")) return "pnpm";
+  if (existsSync("yarn.lock") && hasCommand("yarn")) return "yarn";
+  if ((existsSync("bun.lockb") || existsSync("bun.lock")) && hasCommand("bun")) return "bun";
+  return "npm";
+}
+
+function reinstallDependenciesFromScratch() {
+  const manager = detectPackageManager();
+  const lockFiles = [
+    "pnpm-lock.yaml",
+    "package-lock.json",
+    "yarn.lock",
+    "bun.lockb",
+    "bun.lock",
+    "npm-shrinkwrap.json",
+  ];
+
+  console.log(`Resetting dependencies from scratch (manager=${manager})...`);
+
+  if (existsSync("node_modules")) {
+    rmSync("node_modules", { recursive: true, force: true });
+    console.log("  Removed node_modules");
+  }
+
+  for (const lock of lockFiles) {
+    if (!existsSync(lock)) continue;
+    rmSync(lock, { force: true });
+    console.log(`  Removed ${lock}`);
+  }
+
+  if (manager === "pnpm") {
+    run("pnpm install");
+  } else if (manager === "yarn") {
+    run("yarn install");
+  } else if (manager === "bun") {
+    run("bun install");
+  } else {
+    run("npm install");
+  }
+
+  console.log("  Dependencies reinstalled\n");
+}
+
 // Main flow
 console.log("\n=== Release Script ===\n");
 
@@ -153,9 +206,21 @@ if (currentVersion !== targetVersion) {
   console.log("  package.json already matches target version\n");
 }
 
-// 4. Stage + commit + tag
+// 4. Reinstall dependencies from scratch (remove lock + node_modules first)
+reinstallDependenciesFromScratch();
+
+// 5. Stage + commit + tag
 console.log("Committing and tagging...");
-const files = ["CHANGELOG.md", "package.json", "pnpm-lock.yaml", "package-lock.json"].filter((p) => existsSync(p));
+const files = [
+  "CHANGELOG.md",
+  "package.json",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "yarn.lock",
+  "bun.lockb",
+  "bun.lock",
+  "npm-shrinkwrap.json",
+].filter((p) => existsSync(p));
 if (files.length) {
   run(`git add ${files.map(shellQuote).join(" ")}`);
 }
@@ -171,12 +236,12 @@ run(`git commit -m "Release v${targetVersion}"`);
 run(`git tag v${targetVersion}`);
 console.log();
 
-// 5. Publish
+// 6. Publish
 console.log("Publishing to npm...");
 run("npm publish");
 console.log();
 
-// 6. Push
+// 7. Push
 console.log("Pushing to remote...");
 run("git push origin main");
 run(`git push origin v${targetVersion}`);
