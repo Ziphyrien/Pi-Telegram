@@ -28,15 +28,22 @@ Audit changelog entries for all commits since the last release.
    - Verify a changelog entry exists in `CHANGELOG.md`
    - For external contributions (PRs), verify format: `Description ([#N](url) by [@user](url))`
 
-6. **Add New Features section after changelog fixes:**
-   - Insert a `### New Features` section at the start of `## [Unreleased]` in `CHANGELOG.md`.
+6. **Propose release version (SemVer) and prepare changelog header:**
+   - Based on the audited commits, propose `major` / `minor` / `patch` with a short reason.
+   - After user confirms, insert a release header directly under `## [Unreleased]`:
+     - `## [x.y.z] - YYYY-MM-DD`
+   - Move finalized entries under this new version header.
+
+7. **Add New Features section after changelog fixes:**
+   - Insert a `### New Features` section at the start of `## [Unreleased]` in `CHANGELOG.md` when needed.
    - Propose the top new features to the user for confirmation before writing them.
    - Link to relevant docs and sections whenever possible.
 
-7. **Report:**
+8. **Report:**
    - List commits with missing entries
    - List entries that need duplication across affected areas
    - Add any missing entries directly
+   - Show the chosen release version and tell user to run `node scripts/release.mjs` (the script reads version from changelog and syncs `package.json`).
 
 ## Changelog Format Reference
 
