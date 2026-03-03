@@ -1664,6 +1664,15 @@ function isTextMustBeNonEmptyError(err: unknown): boolean {
   return text.includes("text must be non-empty");
 }
 
+function isDraftHtmlParseError(err: unknown): boolean {
+  const text = describeTelegramSendError(err).toLowerCase();
+  return text.includes("can't parse entities")
+    || text.includes("cant parse entities")
+    || text.includes("unsupported start tag")
+    || text.includes("unexpected end tag")
+    || text.includes("can't find end tag");
+}
+
 function isSendMessageDraftUnsupportedError(err: unknown): boolean {
   const text = describeTelegramSendError(err).toLowerCase();
   if (text.includes("sendmessagedraft")) return true;
@@ -1783,15 +1792,21 @@ async function callSendMessageDraft(
   draftId: number,
   text: string,
   messageThreadId?: number,
+  parseMode?: "HTML",
 ): Promise<void> {
-  const other = Number.isSafeInteger(messageThreadId) && (messageThreadId as number) > 0
-    ? { message_thread_id: messageThreadId as number }
-    : undefined;
+  const other: Record<string, unknown> = {};
+  if (Number.isSafeInteger(messageThreadId) && (messageThreadId as number) > 0) {
+    other.message_thread_id = messageThreadId as number;
+  }
+  if (parseMode) {
+    other.parse_mode = parseMode;
+  }
+  const sendOther = Object.keys(other).length > 0 ? other : undefined;
 
   const apiAny = api as any;
 
   if (typeof apiAny.sendMessageDraft === "function") {
-    await apiAny.sendMessageDraft(chatId, draftId, text, other);
+    await apiAny.sendMessageDraft(chatId, draftId, text, sendOther);
     return;
   }
 
@@ -1800,7 +1815,7 @@ async function callSendMessageDraft(
       chat_id: chatId,
       draft_id: draftId,
       text,
-      ...(other ?? {}),
+      ...(sendOther ?? {}),
     });
     return;
   }
@@ -1826,6 +1841,7 @@ function createDraftStreamUpdater(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let disabled = false;
+  let draftSupportsHtml = true;
   let pendingEdit: Promise<void> = Promise.resolve();
 
   const render = () => {
@@ -1834,29 +1850,53 @@ function createDraftStreamUpdater(
     const preview = buildStreamingPreview(text, tools, safeLimit);
     if (!preview) return;
 
-    let draftText = mdToPlainText(preview).trim();
-    if (!draftText || draftText === "(无回复)") return;
-    if (draftText.length > 4096) {
-      draftText = `${draftText.slice(0, 4095)}…`;
+    let plainDraftText = mdToPlainText(preview).trim();
+    if (!plainDraftText || plainDraftText === "(无回复)") return;
+    if (plainDraftText.length > 4096) {
+      plainDraftText = `${plainDraftText.slice(0, 4095)}…`;
     }
 
-    if (draftText === lastRendered) return;
+    let draftText = plainDraftText;
+    let parseMode: "HTML" | undefined;
+    if (draftSupportsHtml) {
+      const htmlDraftText = mdToTgHtml(preview).trim();
+      if (htmlDraftText && htmlDraftText !== "(无回复)") {
+        draftText = htmlDraftText;
+        parseMode = "HTML";
+      }
+    }
 
-    lastRendered = draftText;
+    const renderKey = `${parseMode ?? "plain"}:${draftText}`;
+    if (renderKey === lastRendered) return;
+
+    lastRendered = renderKey;
     lastEditAt = Date.now();
 
     pendingEdit = pendingEdit
       .then(async () => {
         if (disposed || disabled) return;
         try {
-          await callSendMessageDraft(api, chatId, draftId, draftText, messageThreadId);
+          await callSendMessageDraft(api, chatId, draftId, draftText, messageThreadId, parseMode);
         } catch (err) {
-          if (isMessageNotModifiedError(err)) return;
-          if (isTextMustBeNonEmptyError(err)) return;
-          if (isSendMessageDraftUnsupportedError(err)) {
+          let sendErr: unknown = err;
+
+          if (parseMode === "HTML" && isDraftHtmlParseError(sendErr)) {
+            draftSupportsHtml = false;
+            try {
+              await callSendMessageDraft(api, chatId, draftId, plainDraftText, messageThreadId);
+              lastRendered = `plain:${plainDraftText}`;
+              return;
+            } catch (fallbackErr) {
+              sendErr = fallbackErr;
+            }
+          }
+
+          if (isMessageNotModifiedError(sendErr)) return;
+          if (isTextMustBeNonEmptyError(sendErr)) return;
+          if (isSendMessageDraftUnsupportedError(sendErr)) {
             disabled = true;
           }
-          try { onDraftFallback?.(err); } catch { /* ignore callback error */ }
+          try { onDraftFallback?.(sendErr); } catch { /* ignore callback error */ }
         }
       })
       .catch(() => {
