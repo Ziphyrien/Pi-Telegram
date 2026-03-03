@@ -2,101 +2,173 @@
 /**
  * Release script for pi-telegram
  *
- * Usage: node scripts/release.mjs <major|minor|patch>
+ * Preferred usage:
+ *   node scripts/release.mjs
  *
- * Steps:
- * 1. Check for uncommitted changes
- * 2. Bump version via npm version <type> --no-git-tag-version
- * 3. Update CHANGELOG.md files: keep [Unreleased], insert [version] - date below it
- * 4. Commit and tag
- * 5. Publish to npm
- * 6. Push to remote
+ * Optional:
+ *   node scripts/release.mjs --version <x.y.z>
+ *
+ * Default behavior resolves target version from CHANGELOG.md:
+ * - Read the first release heading like: ## [x.y.z] - YYYY-MM-DD
+ * - Then sync package.json version to that value
  */
 
 import { execSync } from "child_process";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 
-const BUMP_TYPE = process.argv[2];
+const args = process.argv.slice(2);
 
-if (!["major", "minor", "patch"].includes(BUMP_TYPE)) {
-	console.error("Usage: node scripts/release.mjs <major|minor|patch>");
-	process.exit(1);
+let explicitVersion = "";
+if (args.length === 0) {
+  // Use version from changelog.
+} else if (args.length === 2 && args[0] === "--version") {
+  explicitVersion = String(args[1] || "").trim();
+} else {
+  console.error("Usage: node scripts/release.mjs [--version <x.y.z>]");
+  process.exit(1);
 }
 
 function run(cmd, options = {}) {
-	console.log(`$ ${cmd}`);
-	try {
-		return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", ...options });
-	} catch (e) {
-		if (!options.ignoreError) {
-			console.error(`Command failed: ${cmd}`);
-			process.exit(1);
-		}
-		return null;
-	}
+  console.log(`$ ${cmd}`);
+  try {
+    return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", ...options });
+  } catch (e) {
+    if (!options.ignoreError) {
+      console.error(`Command failed: ${cmd}`);
+      process.exit(1);
+    }
+    return null;
+  }
 }
 
-function getVersion() {
-	const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
-	return pkg.version;
+function isSemver(v) {
+  return /^\d+\.\d+\.\d+$/.test(String(v || "").trim());
+}
+
+function getPackageVersion() {
+  const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
+  return String(pkg.version || "0.0.0").trim();
 }
 
 function getChangelogPath() {
-	const changelog = "CHANGELOG.md";
-	if (!existsSync(changelog)) {
-		console.error("Error: CHANGELOG.md not found in project root.");
-		process.exit(1);
-	}
-	return changelog;
+  const changelog = "CHANGELOG.md";
+  if (!existsSync(changelog)) {
+    console.error("Error: CHANGELOG.md not found in project root.");
+    process.exit(1);
+  }
+  return changelog;
 }
 
-function updateChangelogsForRelease(version) {
-	const date = new Date().toISOString().split("T")[0];
-	const changelog = getChangelogPath();
-	const content = readFileSync(changelog, "utf-8");
+function getTopReleaseVersionFromChangelog() {
+  const changelog = getChangelogPath();
+  const content = readFileSync(changelog, "utf-8");
 
-	if (!content.includes("## [Unreleased]")) {
-		console.error(`Error: ${changelog} has no [Unreleased] section`);
-		process.exit(1);
-	}
+  if (!content.includes("## [Unreleased]")) {
+    console.error(`Error: ${changelog} has no [Unreleased] section`);
+    process.exit(1);
+  }
 
-	const updated = content.replace(
-		"## [Unreleased]",
-		`## [Unreleased]\n\n## [${version}] - ${date}`
-	);
-	writeFileSync(changelog, updated);
-	console.log(`  Updated ${changelog}`);
+  // Match release headings like: ## [1.2.3] - 2026-03-03
+  const re = /^##\s+\[(\d+\.\d+\.\d+)\](?:\s+-\s+.+)?\s*$/gm;
+  const m = re.exec(content);
+  if (!m) {
+    console.error("Error: no release version heading found in CHANGELOG.md");
+    console.error("Expected a line like: ## [x.y.z] - YYYY-MM-DD");
+    process.exit(1);
+  }
+
+  return m[1];
+}
+
+function getDirtyPaths() {
+  const raw = run("git status --porcelain", { silent: true }) || "";
+  const lines = raw.split(/\r?\n/).map((x) => x.trimEnd()).filter(Boolean);
+
+  return lines.map((line) => {
+    // Format: XY <path>
+    const m = line.match(/^..\s+(.+)$/);
+    const body = m ? m[1] : line;
+    // Handle rename: old -> new
+    const parts = body.split(" -> ");
+    return (parts[parts.length - 1] || "").trim();
+  });
+}
+
+function assertWorkingTreeAllowed() {
+  const dirty = getDirtyPaths();
+  if (!dirty.length) return;
+
+  const allowed = new Set(["CHANGELOG.md"]);
+  const blocked = dirty.filter((p) => !allowed.has(p));
+
+  if (blocked.length) {
+    console.error("Error: Uncommitted changes detected (only CHANGELOG.md is allowed before release):");
+    for (const p of blocked) console.error(` - ${p}`);
+    process.exit(1);
+  }
+}
+
+function tagExists(version) {
+  const out = run(`git rev-parse -q --verify refs/tags/v${version}`, {
+    silent: true,
+    ignoreError: true,
+  });
+  return !!(out && out.trim());
+}
+
+function shellQuote(s) {
+  return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
 
 // Main flow
 console.log("\n=== Release Script ===\n");
 
-// 1. Check for uncommitted changes
-console.log("Checking for uncommitted changes...");
-const status = run("git status --porcelain", { silent: true });
-if (status && status.trim()) {
-	console.error("Error: Uncommitted changes detected. Commit or stash first.");
-	console.error(status);
-	process.exit(1);
+// 1. Check working tree (allow CHANGELOG only)
+console.log("Checking working tree...");
+assertWorkingTreeAllowed();
+console.log("  Working tree is ready\n");
+
+// 2. Resolve target version
+const targetVersion = explicitVersion || getTopReleaseVersionFromChangelog();
+if (!isSemver(targetVersion)) {
+  console.error(`Error: invalid version: ${targetVersion}`);
+  process.exit(1);
 }
-console.log("  Working directory clean\n");
 
-// 2. Bump version
-console.log(`Bumping version (${BUMP_TYPE})...`);
-run(`npm version ${BUMP_TYPE} --no-git-tag-version`);
-const version = getVersion();
-console.log(`  New version: ${version}\n`);
+if (tagExists(targetVersion)) {
+  console.error(`Error: tag v${targetVersion} already exists.`);
+  process.exit(1);
+}
 
-// 3. Update changelogs
-console.log("Updating CHANGELOG.md files...");
-updateChangelogsForRelease(version);
-console.log();
+const currentVersion = getPackageVersion();
+console.log(`Target version: ${targetVersion}`);
+console.log(`Current package version: ${currentVersion}`);
 
-// 4. Commit and tag
+// 3. Sync package version to target
+if (currentVersion !== targetVersion) {
+  console.log("Syncing package version from changelog...");
+  run(`npm version ${targetVersion} --no-git-tag-version`);
+  console.log(`  package.json -> ${targetVersion}\n`);
+} else {
+  console.log("  package.json already matches target version\n");
+}
+
+// 4. Stage + commit + tag
 console.log("Committing and tagging...");
-run("git add .");
-run(`git commit -m "Release v${version}"`);
-run(`git tag v${version}`);
+const files = ["CHANGELOG.md", "package.json", "pnpm-lock.yaml", "package-lock.json"].filter((p) => existsSync(p));
+if (files.length) {
+  run(`git add ${files.map(shellQuote).join(" ")}`);
+}
+
+const stagedQuietExit = run("git diff --cached --quiet", { ignoreError: true, silent: true });
+if (stagedQuietExit === "") {
+  // When command succeeds, stdout is usually empty string.
+  console.error("Error: no staged changes to release.");
+  process.exit(1);
+}
+
+run(`git commit -m "Release v${targetVersion}"`);
+run(`git tag v${targetVersion}`);
 console.log();
 
 // 5. Publish
@@ -107,7 +179,7 @@ console.log();
 // 6. Push
 console.log("Pushing to remote...");
 run("git push origin main");
-run(`git push origin v${version}`);
+run(`git push origin v${targetVersion}`);
 console.log();
 
-console.log(`=== Released v${version} ===`);
+console.log(`=== Released v${targetVersion} ===`);
