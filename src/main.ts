@@ -29,9 +29,7 @@ mkdirSync(cronRoot, { recursive: true });
 const defaultWorkspace = resolve(telegramRoot, "workspace");
 mkdirSync(defaultWorkspace, { recursive: true });
 
-const pkg = getPackageMeta();
-const packageName = pkg.name || "@ziphyrien/pi-telegram";
-const appVersion = pkg.version || "0.0.0";
+const { name: packageName, version: appVersion } = getPackageMeta();
 
 if (!existsSync(settingsPath)) {
   const template: AppConfig = {

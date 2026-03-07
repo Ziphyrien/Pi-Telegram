@@ -66,7 +66,6 @@ npm start
   ],
   "idleTimeoutMs": 600000,
   "maxResponseLength": 4000,
-  "lastChangelogVersion": "0.1.0",
   "cron": {
     "enabled": true,
     "defaultTimezone": "Asia/Shanghai",

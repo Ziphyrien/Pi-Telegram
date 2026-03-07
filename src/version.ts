@@ -21,6 +21,11 @@ export interface ChangelogEntry {
   content: string;
 }
 
+const DEFAULT_PACKAGE_META: PackageMeta = {
+  name: "pi-telegram",
+  version: "0.0.0",
+};
+
 export const isBunBinary = import.meta.url.includes("$bunfs")
   || import.meta.url.includes("~BUN")
   || import.meta.url.includes("%7EBUN");
@@ -119,14 +124,11 @@ export function getPackageMeta(): PackageMeta {
     };
 
     return {
-      name: pkg.name || "@ziphyrien/pi-telegram",
-      version: pkg.version || "0.0.0",
+      name: pkg.name || DEFAULT_PACKAGE_META.name,
+      version: pkg.version || DEFAULT_PACKAGE_META.version,
     };
   } catch {
-    return {
-      name: "@ziphyrien/pi-telegram",
-      version: "0.0.0",
-    };
+    return { ...DEFAULT_PACKAGE_META };
   }
 }
 
