@@ -1,8 +1,8 @@
 // src/pi-rpc.ts — single pi RPC subprocess wrapper
 import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
 import { mkdirSync } from "node:fs";
 import { EventEmitter } from "node:events";
+import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
 import type { PiImage, PiModelInfo, PiRpcEvent, PiSessionStats, PromptResult } from "./types.js";
 
 export interface PiRpcOptions {
@@ -27,6 +27,7 @@ export class PiRpc extends EventEmitter {
   private _queue: Array<{ run: () => void; reject: (err: Error) => void }> = [];
   private _busy = false;
   private _stderrTail: string[] = [];
+  private _detachStdoutReader: (() => void) | null = null;
   private _exitNotified = false;
 
   constructor(
@@ -75,11 +76,22 @@ export class PiRpc extends EventEmitter {
     this._exitNotified = true;
     this._alive = false;
     this._streaming = false;
+    this._detachStdoutReader?.();
+    this._detachStdoutReader = null;
     this.emit("exit", code);
   }
 
   private toError(err: unknown): Error {
     return err instanceof Error ? err : new Error(String(err));
+  }
+
+  private summarizeRpcLine(line: string, max = 300): string {
+    const normalized = line
+      .replace(/\r/g, "\\r")
+      .replace(/\n/g, "\\n")
+      .replace(/\u2028/g, "\\u2028")
+      .replace(/\u2029/g, "\\u2029");
+    return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
   }
 
   private extractRpcError(event: PiRpcEvent, fallback = "RPC error"): string {
@@ -182,14 +194,21 @@ export class PiRpc extends EventEmitter {
     this._alive = true;
     this._stderrTail = [];
     this._exitNotified = false;
+    this._detachStdoutReader?.();
+    this._detachStdoutReader = null;
 
-    const rl = createInterface({ input: this.proc.stdout! });
-    rl.on("line", (line) => {
+    this._detachStdoutReader = attachJsonlLineReader(this.proc.stdout!, (line) => {
+      if (!line.trim()) return;
       try {
         const event: PiRpcEvent = JSON.parse(line);
         this._lastActivity = Date.now();
         this.emit("event", event);
-      } catch { /* ignore non-JSON lines */ }
+      } catch (err) {
+        const summary = this.summarizeRpcLine(line);
+        const message = err instanceof Error ? err.message : String(err);
+        this.appendStderr(`invalid RPC stdout line: ${summary}`);
+        this.emit("stderr", `invalid RPC stdout line ignored (${message}): ${summary}`);
+      }
     });
 
     this.proc.stderr?.on("data", (chunk: Buffer) => {
@@ -214,7 +233,7 @@ export class PiRpc extends EventEmitter {
     if (!this._alive || !this.proc?.stdin) {
       throw this.withStderrContext("pi process not alive");
     }
-    this.proc.stdin.write(JSON.stringify(cmd) + "\n");
+    this.proc.stdin.write(serializeJsonLine(cmd));
     this._lastActivity = Date.now();
   }
 
