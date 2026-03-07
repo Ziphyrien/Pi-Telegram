@@ -2,9 +2,15 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-07
+
+### Changed
+
+- Improved streaming draft previews to render Telegram HTML when possible and automatically fall back to plain text if Telegram rejects the HTML.
+
 ### Fixed
 
-- Adapted pi RPC framing to strict LF-delimited JSONL, replacing Node `readline` with an LF-only reader so payloads containing `U+2028` / `U+2029` no longer break the stream.
+- Adapted Pi-Telegram to pi's strict LF-delimited JSONL RPC framing, replacing Node `readline` with an LF-only reader so payloads containing `U+2028` / `U+2029` no longer break the stream.
 
 ## [0.1.1] - 2026-03-03
 
