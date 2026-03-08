@@ -44,12 +44,20 @@ export class PiRpc extends EventEmitter {
   get busy() { return this._busy || this._queue.length > 0; }
   get lastActivity() { return this._lastActivity; }
 
-  /** Cancel queued prompts and abort current operation */
-  abortAll(): void {
+  /** Cancel queued prompts only. Returns number of cancelled queued requests. */
+  cancelQueued(): number {
+    let cancelled = 0;
     while (this._queue.length) {
       const queued = this._queue.shift();
       queued?.reject(new Error("aborted"));
+      cancelled += 1;
     }
+    return cancelled;
+  }
+
+  /** Cancel queued prompts and abort current operation */
+  abortAll(): void {
+    this.cancelQueued();
     this.abort();
   }
 
@@ -370,6 +378,15 @@ export class PiRpc extends EventEmitter {
 
   newSession(): void {
     this.send({ type: "new_session" });
+  }
+
+  async rpcNewSession(parentSession?: string): Promise<{ cancelled: boolean }> {
+    const cmd: Record<string, unknown> = { type: "new_session" };
+    if (parentSession) cmd.parentSession = parentSession;
+    const res = await this.rpc(cmd);
+    return {
+      cancelled: Boolean((res as any).cancelled),
+    };
   }
 
   /** Generic RPC command that waits for a response */

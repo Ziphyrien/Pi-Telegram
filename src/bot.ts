@@ -110,6 +110,107 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   const commandGroup = new CommandGroup<BotContext>();
   bot.use(commandGroup);
 
+  const abortNoticeSuppressionByChat = new Map<number, number[]>();
+  const ABORT_NOTICE_SUPPRESS_TTL_MS = 15_000;
+  type ActivePromptMode = "stream" | "non-stream";
+  type ActivePromptState = { token: symbol; mode: ActivePromptMode; done: Promise<void> };
+  type AbortDirective = { sendPartial: boolean; showAbortNotice: boolean };
+  const activePromptByChat = new Map<number, ActivePromptState>();
+  const abortDirectiveByPromptToken = new Map<symbol, AbortDirective>();
+
+  const suppressAbortNotice = (chatId: number, count = 1): void => {
+    if (!Number.isSafeInteger(chatId) || count <= 0) return;
+
+    const now = Date.now();
+    const list = (abortNoticeSuppressionByChat.get(chatId) ?? [])
+      .filter((expiresAt) => expiresAt > now);
+    const expiresAt = now + ABORT_NOTICE_SUPPRESS_TTL_MS;
+
+    for (let i = 0; i < count; i += 1) {
+      list.push(expiresAt);
+    }
+
+    abortNoticeSuppressionByChat.set(chatId, list);
+  };
+
+  const consumeAbortNoticeSuppression = (chatId: number): boolean => {
+    const now = Date.now();
+    const list = abortNoticeSuppressionByChat.get(chatId);
+    if (!list?.length) return false;
+
+    const alive = list.filter((expiresAt) => expiresAt > now);
+    if (!alive.length) {
+      abortNoticeSuppressionByChat.delete(chatId);
+      return false;
+    }
+
+    alive.shift();
+    if (alive.length) {
+      abortNoticeSuppressionByChat.set(chatId, alive);
+    } else {
+      abortNoticeSuppressionByChat.delete(chatId);
+    }
+
+    return true;
+  };
+
+  const createActivePromptTracker = (chatId: number, mode: ActivePromptMode) => {
+    const token = Symbol(`prompt:${chatId}:${mode}`);
+    let started = false;
+    let finished = false;
+    let resolveDone: () => void = () => {};
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+
+    return {
+      token,
+      onStart: () => {
+        if (started) return;
+        started = true;
+        activePromptByChat.set(chatId, { token, mode, done });
+      },
+      finish: () => {
+        if (finished) return;
+        finished = true;
+        const current = activePromptByChat.get(chatId);
+        if (current?.token === token) {
+          activePromptByChat.delete(chatId);
+        }
+        abortDirectiveByPromptToken.delete(token);
+        resolveDone();
+      },
+      done,
+    };
+  };
+
+  const cancelQueuedSilently = (chatId: number, inst: ReturnType<PiPool["has"]>): number => {
+    if (!inst?.alive) return 0;
+    const queued = inst.queuedCount;
+    if (queued > 0) {
+      suppressAbortNotice(chatId, queued);
+      inst.cancelQueued();
+    }
+    return queued;
+  };
+
+  const abortActivePrompt = async (
+    chatId: number,
+    inst: ReturnType<PiPool["has"]>,
+    opts: { sendPartialOnNonStream: boolean; showAbortNotice: boolean },
+  ): Promise<{ aborted: boolean; mode?: ActivePromptMode }> => {
+    const active = activePromptByChat.get(chatId);
+    if (!active || !inst?.alive) return { aborted: false };
+
+    abortDirectiveByPromptToken.set(active.token, {
+      sendPartial: opts.sendPartialOnNonStream && active.mode === "non-stream",
+      showAbortNotice: opts.showAbortNotice,
+    });
+    inst.abort();
+    await active.done;
+    return { aborted: true, mode: active.mode };
+  };
+
   commandGroup.command("status", "查看状态", async (tgCtx) => {
     const chatId = tgCtx.chat.id;
     const key = chatKey(botKey, chatId);
@@ -165,52 +266,89 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   });
 
   commandGroup.command("new", "新建会话", async (tgCtx) => {
-    const key = chatKey(botKey, tgCtx.chat.id);
+    const chatId = tgCtx.chat.id;
+    const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
-    if (inst?.alive) {
-      inst.abortAll();
-      inst.newSession();
-      await tgCtx.reply("🆕 已新建会话");
-    } else {
+
+    if (!inst?.alive) {
       pool.getFresh(key);
       await tgCtx.reply("🆕 已新建会话");
+      return;
+    }
+
+    cancelQueuedSilently(chatId, inst);
+    await abortActivePrompt(chatId, inst, {
+      sendPartialOnNonStream: true,
+      showAbortNotice: true,
+    });
+
+    try {
+      const result = await inst.rpcNewSession();
+      if (result.cancelled) {
+        await tgCtx.reply("⚠️ 新建会话已取消");
+        return;
+      }
+      await tgCtx.reply("🆕 已新建会话");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await tgCtx.reply(`❌ 新建会话失败：${truncate(message, 1000)}`);
     }
   });
 
   commandGroup.command("abort", "中止当前操作", async (tgCtx) => {
-    const key = chatKey(botKey, tgCtx.chat.id);
+    const chatId = tgCtx.chat.id;
+    const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
-    if (inst?.alive && inst.running) {
-      const queued = inst.queuedCount;
-      inst.abort();
-      await tgCtx.reply(
-        queued > 0
-          ? `🛑 已中止当前任务（队列保留 ${queued} 条）\n如需清空队列可用 /abortall`
-          : "🛑 已中止当前任务",
-      );
-    } else if (inst?.alive && inst.queuedCount > 0) {
-      // 理论上不会进入（queued>0 时 running 应为 true），保底处理。
-      const queued = inst.queuedCount;
-      inst.abortAll();
-      await tgCtx.reply(`🛑 已取消队列 ${queued} 条`);
-    } else {
+
+    if (!inst?.alive) {
       await tgCtx.reply("当前无操作");
+      return;
     }
+
+    const queued = inst.queuedCount;
+    const stopped = await abortActivePrompt(chatId, inst, {
+      sendPartialOnNonStream: true,
+      showAbortNotice: true,
+    });
+
+    if (stopped.aborted) {
+      if (queued > 0) {
+        await tgCtx.reply(`📥 队列保留 ${queued} 条，继续执行中\n如需清空队列可用 /abortall`);
+      }
+      return;
+    }
+
+    if (queued > 0) {
+      await tgCtx.reply(`当前无运行任务，队列中还有 ${queued} 条`);
+      return;
+    }
+
+    await tgCtx.reply("当前无操作");
   });
 
   commandGroup.command("abortall", "中止并清空队列", async (tgCtx) => {
-    const key = chatKey(botKey, tgCtx.chat.id);
+    const chatId = tgCtx.chat.id;
+    const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
-    if (inst?.alive && inst.busy) {
-      const queued = inst.queuedCount;
-      inst.abortAll();
-      await tgCtx.reply(
-        queued > 0
-          ? `🛑 已中止当前任务，并清空队列 ${queued} 条`
-          : "🛑 已中止当前任务",
-      );
-    } else {
+
+    if (!inst?.alive || !inst.busy) {
       await tgCtx.reply("当前无操作");
+      return;
+    }
+
+    const cleared = cancelQueuedSilently(chatId, inst);
+    const stopped = await abortActivePrompt(chatId, inst, {
+      sendPartialOnNonStream: true,
+      showAbortNotice: true,
+    });
+
+    if (cleared > 0) {
+      await tgCtx.reply(`🧹 已清空队列 ${cleared} 条`);
+      return;
+    }
+
+    if (!stopped.aborted) {
+      await tgCtx.reply("当前无运行任务");
     }
   });
 
@@ -1130,12 +1268,12 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     let streamedText = "";
     tgCtx.chatAction = "typing";
 
-    const onStart = ahead > 0
-      ? () => {
-        if (!status) return;
-        void status.editText("⏳ 思考中...").catch(() => {});
-      }
-      : undefined;
+    const promptTracker = createActivePromptTracker(chatId, useStream ? "stream" : "non-stream");
+    const onStart = () => {
+      promptTracker.onStart();
+      if (!status || ahead <= 0) return;
+      void status.editText("⏳ 思考中...").catch(() => {});
+    };
 
     try {
       const supportsImages = await supportsImagesForChat(chatId, inst);
@@ -1178,14 +1316,38 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         return;
       }
 
-      const result = await inst.prompt(promptMessage, images, { onStart });
+      const result = await inst.prompt(promptMessage, images, {
+        onStart,
+        onTextDelta: (_delta, fullText) => {
+          streamedText = stripProtocolTags(fullText);
+        },
+      });
       await status?.delete().catch(() => {});
       const processed = await applyCronToolDirectives(tgCtx, result.text);
       await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message === "aborted") {
-        if (status) {
+        const abortDirective = abortDirectiveByPromptToken.get(promptTracker.token);
+        if (abortDirective) {
+          abortDirectiveByPromptToken.delete(promptTracker.token);
+          await status?.delete().catch(() => {});
+
+          const partial = stripProtocolTags(streamedText).trim();
+          if (abortDirective.sendPartial && partial) {
+            await sendPreparedReply(
+              tgCtx,
+              { body: partial, attachments: [], warnings: [] },
+              maxResponseLength,
+            ).catch(() => {});
+          }
+
+          if (abortDirective.showAbortNotice) {
+            await tgCtx.reply("🛑 已中止").catch(() => {});
+          }
+        } else if (consumeAbortNoticeSuppression(chatId)) {
+          await status?.delete().catch(() => {});
+        } else if (status) {
           await reportStatusOrReply(tgCtx, status, "🛑 已中止");
         } else {
           await tgCtx.reply("🛑 已中止").catch(() => {});
@@ -1207,6 +1369,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         }
       }
     } finally {
+      promptTracker.finish();
       tgCtx.chatAction = null;
     }
   };
