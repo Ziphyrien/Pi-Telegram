@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-08
+
+### Changed
+
+- Unified stop handling across `/abort`, `/abortall`, and `/new`: non-streaming runs now send partial output before stopping, streaming runs stop cleanly, and queued requests are cancelled silently when appropriate.
+
+### Fixed
+
+- Restored `/cron` menu responses by sending and refreshing the menu through the Telegram bot context instead of direct bot API calls.
+
 ## [0.1.2] - 2026-03-07
 
 ### Changed
