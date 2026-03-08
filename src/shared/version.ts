@@ -1,4 +1,4 @@
-// src/version.ts — package/version/update/changelog helpers
+// src/shared/version.ts — package/version/update/changelog helpers
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";

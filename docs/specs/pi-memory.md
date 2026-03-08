@@ -3092,8 +3092,7 @@ pi --mode rpc --no-session
   - `cron/`
   - `shared/`
   - `memory/`
-- 生成 `scripts/refactor/module-layout.json`
-- 实施 `scripts/refactor/apply-module-layout.mjs`
+- 通过一次性迁移辅助完成模块整理（可临时使用 `scripts/refactor/*` 一类脚本）
 - 用机械迁移方式完成：
   - 文件归位
   - import/export 重写

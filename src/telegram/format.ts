@@ -1,4 +1,4 @@
-// src/md2tg.ts — markdown → Telegram HTML
+// src/telegram/format.ts — markdown → Telegram HTML
 import MarkdownIt from "markdown-it";
 import cjk from "markdown-it-cjk-friendly";
 import sanitize from "sanitize-html";

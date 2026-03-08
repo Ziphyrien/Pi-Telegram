@@ -1093,15 +1093,18 @@ src/
 
 1. `docs/specs/pi-telegram-pre-memory-prep.md`
 2. `docs/specs/README.md`
-3. `scripts/refactor/module-layout.json`
-4. `scripts/refactor/apply-module-layout.mjs`
-5. `src/memory/README.md`（或等价占位文件）
+3. 一次性迁移方案（可通过临时 `scripts/refactor/*` 落地）
+4. `src/memory/README.md`（或等价占位文件）
 
 其中：
 
 - 第 1、2 项属于文档交付
-- 第 3、4 项属于自动化结构整理工具
-- 第 5 项属于 future memory 落点占位
+- 第 3 项属于一次性结构整理辅助
+- 第 4 项属于 future memory 落点占位
+
+说明：
+
+- 若结构迁移已经完成，则一次性迁移脚本不要求长期保留在仓库中
 
 ---
 

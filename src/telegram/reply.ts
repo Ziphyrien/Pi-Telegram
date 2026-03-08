@@ -1,4 +1,4 @@
-// src/reply-tool.ts — reply directive parsing + message memory resolution
+// src/telegram/reply.ts — reply directive parsing + message memory resolution
 import type { ReplyParameters } from "@grammyjs/types";
 
 export type ReplyRole = "self" | "user" | "any";

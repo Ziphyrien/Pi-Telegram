@@ -1,4 +1,4 @@
-// src/cron-tool.ts — parse AI cron directives (<tg-cron .../>)
+// src/cron/directives.ts — parse AI cron directives (<tg-cron .../>)
 
 export type TgCronAction = "add" | "list" | "stat" | "on" | "off" | "del" | "run" | "rename";
 export type TgCronKind = "at" | "every" | "cron";

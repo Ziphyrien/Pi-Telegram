@@ -41,11 +41,15 @@ Last Updated: 2026-03-08
 
 ## Current Recommendation
 
-如果当前工作重点是“在不立刻实现 memory 的情况下，为 memory 铺路”，优先推进：
+当前这轮 `src/` 结构整理已经完成。
 
-1. `pi-telegram-pre-memory-prep.md`
-2. `pi-telegram-refactor-automation.md`
-3. `scripts/refactor/module-layout.json`
-4. `scripts/refactor/apply-module-layout.mjs`
+后续推荐顺序：
 
-完成结构整理后，再继续 `pi-memory` 的实现级设计与接入。
+1. 以 `pi-telegram-pre-memory-prep.md` 和 `pi-telegram-refactor-automation.md` 作为历史设计依据
+2. 继续在当前模块化结构上推进 `pi-memory` 的实现级设计
+3. 在 `src/memory/` 下开始建立真正的 memory core / store / ingest / retrieval 骨架
+
+说明：
+
+- `scripts/refactor/*` 属于一次性迁移辅助脚本
+- 迁移完成后可以从仓库中删除，不要求长期保留
