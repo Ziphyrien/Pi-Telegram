@@ -367,27 +367,26 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     return next;
   };
 
-  const upsertCronMenuMessage = async (chatId: number): Promise<void> => {
+  const upsertCronMenuMessage = async (tgCtx: BotContext): Promise<void> => {
+    const chatId = tgCtx.chat?.id ?? 0;
     const text = buildCronMenuTitle(chatId);
     const existingId = cronMenuMessageByChat.get(chatId);
 
+    await ensureCronMenuReady(tgCtx);
+
     if (existingId) {
       try {
-        await bot.api.editMessageText(chatId, existingId, text, { reply_markup: cronMenu });
+        await tgCtx.api.editMessageText(chatId, existingId, text, { reply_markup: cronMenu });
         return;
       } catch (err) {
-        if (!isMessageNotModifiedError(err)) {
-          cronMenuMessageByChat.delete(chatId);
-        }
+        if (isMessageNotModifiedError(err)) return;
+        cronMenuMessageByChat.delete(chatId);
+        log.warn(`chat${chatId} 更新 /cron 菜单失败，将尝试重新发送：${describeTelegramSendError(err)}`);
       }
     }
 
-    try {
-      const sent = await bot.api.sendMessage(chatId, text, { reply_markup: cronMenu });
-      cronMenuMessageByChat.set(chatId, sent.message_id);
-    } catch {
-      // ignore
-    }
+    const sent = await tgCtx.reply(text, { reply_markup: cronMenu });
+    cronMenuMessageByChat.set(chatId, sent.message_id);
   };
 
   const cronMenu = new Menu<BotContext>(cronRootMenuId, {
@@ -538,8 +537,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       const chatId = tgCtx.chat.id;
 
       if (!raw.trim()) {
-        await ensureCronMenuReady(tgCtx);
-        await upsertCronMenuMessage(chatId);
+        await upsertCronMenuMessage(tgCtx);
         return;
       }
 
@@ -987,7 +985,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
         const updated = await cron.rename(pending.jobId, raw);
         cronPendingInput.delete(chatId);
-        await upsertCronMenuMessage(chatId);
+        await upsertCronMenuMessage(tgCtx);
         if (!updated) {
           await tgCtx.reply("❌ 重命名失败");
           return true;
@@ -1022,7 +1020,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         });
 
         cronPendingInput.delete(chatId);
-        await upsertCronMenuMessage(chatId);
+        await upsertCronMenuMessage(tgCtx);
         await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return true;
       }
@@ -1052,7 +1050,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         });
 
         cronPendingInput.delete(chatId);
-        await upsertCronMenuMessage(chatId);
+        await upsertCronMenuMessage(tgCtx);
         await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
         return true;
       }
@@ -1102,7 +1100,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       });
 
       cronPendingInput.delete(chatId);
-      await upsertCronMenuMessage(chatId);
+      await upsertCronMenuMessage(tgCtx);
       await tgCtx.reply(`✅ 已创建任务 ${job.id}\n${formatCronSchedule(job.schedule)}\n名称：${job.name}`);
       return true;
     } catch (err) {
