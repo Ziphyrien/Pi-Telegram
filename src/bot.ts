@@ -197,13 +197,13 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   const abortActivePrompt = async (
     chatId: number,
     inst: ReturnType<PiPool["has"]>,
-    opts: { sendPartialOnNonStream: boolean; showAbortNotice: boolean },
+    opts: { sendPartial: boolean; showAbortNotice: boolean },
   ): Promise<{ aborted: boolean; mode?: ActivePromptMode }> => {
     const active = activePromptByChat.get(chatId);
     if (!active || !inst?.alive) return { aborted: false };
 
     abortDirectiveByPromptToken.set(active.token, {
-      sendPartial: opts.sendPartialOnNonStream && active.mode === "non-stream",
+      sendPartial: opts.sendPartial,
       showAbortNotice: opts.showAbortNotice,
     });
     inst.abort();
@@ -278,7 +278,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     cancelQueuedSilently(chatId, inst);
     await abortActivePrompt(chatId, inst, {
-      sendPartialOnNonStream: true,
+      sendPartial: true,
       showAbortNotice: true,
     });
 
@@ -307,7 +307,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     const queued = inst.queuedCount;
     const stopped = await abortActivePrompt(chatId, inst, {
-      sendPartialOnNonStream: true,
+      sendPartial: true,
       showAbortNotice: true,
     });
 
@@ -338,7 +338,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     const cleared = cancelQueuedSilently(chatId, inst);
     const stopped = await abortActivePrompt(chatId, inst, {
-      sendPartialOnNonStream: true,
+      sendPartial: true,
       showAbortNotice: true,
     });
 
