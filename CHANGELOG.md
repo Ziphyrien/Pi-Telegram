@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-08
+
+### New Features
+
+- Added the built-in `pi-memory` long-term memory system for Pi-Telegram, including same-repo bridge integration, multi-scope SQLite storage, hybrid retrieval with RRF/MMR/Time-Decay/ColBERT/PPR/recursive clustering/novelty scoring/evidence-gap analysis, optional LLM-driven extraction and control, explicit memory operations, export/backup/repair/integrity tooling, and release-time bridge version synchronization.
+
 ## [0.1.3] - 2026-03-08
 
 ### Changed
