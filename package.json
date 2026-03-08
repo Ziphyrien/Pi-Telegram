@@ -2,13 +2,20 @@
   "name": "pi-telegram",
   "version": "0.1.3",
   "description": "Pi-Telegram: Bridge Telegram bots to pi coding agent via RPC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ziphyrien/Pi-Telegram.git"
+  },
   "type": "module",
   "files": [
     "dist",
+    "packages/pi-memory-bridge",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "sync:memory-bridge-version": "node scripts/sync-memory-bridge-version.mjs",
+    "check:bridge-extension": "npm run sync:memory-bridge-version && tsc -p packages/pi-memory-bridge/tsconfig.json --noEmit",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run check:bridge-extension && tsc",
     "start": "node dist/main.js",
     "dev": "tsx --watch src/main.ts",
     "pitg": "node dist/main.js",

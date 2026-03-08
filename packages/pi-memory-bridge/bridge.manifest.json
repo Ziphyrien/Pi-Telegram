@@ -1,0 +1,7 @@
+{
+  "name": "pi-memory-bridge",
+  "appVersion": "0.1.3",
+  "bridgeVersion": "0.1.3",
+  "bridgeProtocolVersion": 1,
+  "entry": "./extensions/memory-bridge.ts"
+}

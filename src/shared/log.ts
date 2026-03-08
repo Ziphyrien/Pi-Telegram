@@ -3,7 +3,7 @@ import { resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const themeJs = resolve(__dirname, "..", "node_modules", "@mariozechner", "pi-coding-agent",
+const themeJs = resolve(__dirname, "..", "..", "node_modules", "@mariozechner", "pi-coding-agent",
   "dist", "modes", "interactive", "theme", "theme.js");
 
 const mod = await import(pathToFileURL(themeJs).href);

@@ -85,6 +85,28 @@ Last Updated: 2026-03-08
 - 使用 JSON schema / response format（如果 provider 支持）
 - 长 prompt 中先给 inventory 再给 context
 
+### 2.7 Non-overlap with active memory controller
+
+本文档中的 prompt contract 需要与主 spec 中的 Active Memory Operation Chain 去重。
+
+具体约束如下：
+
+- `Prompt 1 ~ Prompt 8` 属于**写侧 extraction / consolidation**
+- `Prompt 9 ~ Prompt 11` 属于**混合检索栈本身**
+- future 的 active memory controller 若存在，只能：
+  - 调用或重复进入既有 `Recall Planner`
+  - 调用或重复进入既有 `Recall Gating`
+  - 调用或重复进入既有 `Hybrid Rerank / Evidence Selection`
+  - 产出写侧的 `operation proposal`
+- active controller **不应再定义第二套 planner / gating / rerank prompt family**
+- active controller **不应再定义第二套 context injection prompt family**
+- 若 future 增加 `Operation Decision Prompt`，它应归属于**写侧 admission / mutation decision**，而不是归属于 hybrid retrieval
+
+换句话说：
+
+> Active controller 可以驱动这些 prompt 被调用多少轮、何时 early stop、何时进入 answer，
+> 但这些 prompt 的职责边界本身不因 active controller 而改变。
+
 ---
 
 ## 3. Shared Prompt Context Blocks
@@ -661,6 +683,11 @@ System intent:
 - `simple`：尽量少层少通道
 - `hybrid`：平衡精度与覆盖，并默认生成 retrieval clues
 - `complex`：允许更深层和更多 graph/temporal expansion，并默认生成 retrieval clues / query reformulation
+- planner 输出不只是“通道开关”，还应隐含以下算法决策：
+  - 哪些通道进入 **RRF**
+  - 是否需要 **PPR** graph propagation
+  - 是否提高 / 降低 **Time-Decay** 强度
+  - 是否需要更强的 **Evidence Gap Analysis** 与 closed-loop retrieve–reflect
 
 ---
 
@@ -701,6 +728,8 @@ System intent:
 - 同一 `family_uri` 默认只保留一个代表节点
 - 若 query 明确需要证据链，可同时保留 summary + evidence
 - gating 属于混合检索阶段的 LLM 参与层，而不是可有可无的后处理
+- gating 之前的程序化层可已使用 **RRF / PPR / Time-Decay / Recursive Clustering / MMR**；LLM gating 不应忽视这些结构线索
+- 若候选过度同质，应显式输出 collapse 倾向，而不是把多个近义候选全部放过
 
 ---
 
@@ -751,6 +780,7 @@ System intent:
 - 若 query 明确需要依据，可保留 summary + evidence 的组合
 - 不得编造新 memory URI
 - 只在给定候选池内做排序、选择与 collapse
+- 若程序化层已提供 **Novelty Score / MMR / cluster representative order / ColBERT-style late interaction score**，LLM rerank 应把这些视为 evidence，而不是重新忽略它们
 
 ---
 

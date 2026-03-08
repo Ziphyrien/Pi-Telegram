@@ -18,10 +18,37 @@ export interface CronConfig {
   retryBackoffMs?: number;
 }
 
+export interface MemoryLlmConfig {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  api?: string;
+  authHeader?: boolean;
+}
+
+export interface MemoryEmbeddingConfig {
+  model?: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+}
+
+export interface MemoryConfig {
+  enabled?: boolean;
+  storePath?: string;
+  maxContextChars?: number;
+  maxRetrievedMemories?: number;
+  maxRecentTurns?: number;
+  trace?: boolean;
+  llm?: MemoryLlmConfig;
+  embedding?: MemoryEmbeddingConfig;
+}
+
 export interface AppConfig {
   bots: BotConfig[];
   idleTimeoutMs: number;
   maxResponseLength: number;
   lastChangelogVersion?: string;
   cron?: CronConfig;
+  memory?: MemoryConfig;
 }

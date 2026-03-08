@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./.tsbuild",
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "extensions/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".tsbuild"
+  ]
+}

@@ -206,14 +206,21 @@ if (currentVersion !== targetVersion) {
   console.log("  package.json already matches target version\n");
 }
 
-// 4. Reinstall dependencies from scratch (remove lock + node_modules first)
+// 4. Sync same-repo memory bridge version metadata
+console.log("Syncing memory bridge version metadata...");
+run("npm run sync:memory-bridge-version");
+console.log("  memory bridge package/manifest synced\n");
+
+// 5. Reinstall dependencies from scratch (remove lock + node_modules first)
 reinstallDependenciesFromScratch();
 
-// 5. Stage + commit + tag
+// 6. Stage + commit + tag
 console.log("Committing and tagging...");
 const files = [
   "CHANGELOG.md",
   "package.json",
+  "packages/pi-memory-bridge/package.json",
+  "packages/pi-memory-bridge/bridge.manifest.json",
   "pnpm-lock.yaml",
   "package-lock.json",
   "yarn.lock",
@@ -236,12 +243,12 @@ run(`git commit -m "Release v${targetVersion}"`);
 run(`git tag v${targetVersion}`);
 console.log();
 
-// 6. Publish
+// 7. Publish
 console.log("Publishing to npm...");
 run("npm publish");
 console.log();
 
-// 7. Push
+// 8. Push
 console.log("Pushing to remote...");
 run("git push origin main");
 run(`git push origin v${targetVersion}`);

@@ -31,6 +31,8 @@ import {
   type TgCronDirective,
 } from "../cron/directives.js";
 import type { PiPool } from "../pi/pool.js";
+import { createTelegramMemoryClient } from "../memory/telegram-client.js";
+import type { MemoryService } from "../memory/service.js";
 import type { CronJobRecord, CronSchedule } from "../cron/types.js";
 import type { CronService } from "../cron/service.js";
 import type { BotConfig } from "../shared/types.js";
@@ -43,6 +45,8 @@ export interface CreateBotOptions {
   config: BotConfig;
   pool: PiPool;
   cron: CronService;
+  memory?: MemoryService | null;
+  memoryTransport?: "direct" | "bridge" | "disabled";
   maxResponseLength: number;
   initialStreamByChat?: Record<string, boolean>;
   onStreamModeChange?: (chatId: number, enabled: boolean) => Promise<void> | void;
@@ -54,12 +58,21 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     config,
     pool,
     cron,
+    memory,
+    memoryTransport,
     maxResponseLength,
     initialStreamByChat,
     onStreamModeChange,
   } = opts;
   const bot = new Bot<BotContext>(config.token);
   const botKey = createHash("sha1").update(config.token).digest("hex").slice(0, 12);
+  const memoryClient = createTelegramMemoryClient({
+    service: memory,
+    transport: memoryTransport,
+    botHash: botKey,
+    botName: String(config.name || `bot${botIndex}`).trim() || `bot${botIndex}`,
+    workspaceCwd: String(config.cwd || "").trim(),
+  });
 
   // --- plugins ---
   bot.api.config.use(hydrateFiles(config.token));
@@ -250,6 +263,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     }
 
     const cronSt = cron.status(chatId);
+    const memoryStats = memoryClient.getStats();
 
     const lines = [
       `${alive} | ${state}`,
@@ -260,10 +274,242 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       sessionLabel ? `🗂 会话: ${sessionLabel}` : "",
       costLabel,
       `📊 活跃: ${pool.size}`,
+      memoryStats?.enabled ? `🧠 记忆: 开启(${memoryClient.transport}) | 条目 ${memoryStats.memoryNodes} | turns ${memoryStats.rawTurns}` : "🧠 记忆: 关闭",
       `⏰ 定时: ${cronSt.enabled ? "开启" : "关闭"} | 任务 ${cronSt.totalJobs}（启用 ${cronSt.enabledJobs}）`,
     ].filter(Boolean);
 
     await tgCtx.reply(lines.join("\n"));
+  });
+
+  const currentMemoryScopeId = (tgCtx: BotContext, kind: "chat-local" | "user-global" | "workspace-global"): string | undefined => {
+    const chat = tgCtx.chat;
+    if (!chat) return undefined;
+    if (kind === "chat-local") return `${botKey}:${chat.id}`;
+    if (kind === "user-global") {
+      return chat.type === "private" ? String(chat.id) : undefined;
+    }
+    return `repo.${createHash("sha1").update(String(config.cwd || "").trim() || "workspace:default").digest("hex").slice(0, 10)}`;
+  };
+
+  const parseMemoryScopeKeyword = (raw: string): "chat-local" | "user-global" | "workspace-global" | undefined => {
+    const key = raw.trim().toLowerCase();
+    return key === "chat" ? "chat-local" : key === "user" ? "user-global" : key === "workspace" ? "workspace-global" : undefined;
+  };
+
+  commandGroup.command("memorysearch", "搜索记忆", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const promptText = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memorysearch").trim();
+    if (!promptText) {
+      await tgCtx.reply("用法：/memorysearch <关键词>");
+      return;
+    }
+
+    const result = await memoryClient.search({
+      chatId: tgCtx.chat.id,
+      userId: tgCtx.chat.type === "private" ? tgCtx.chat.id : undefined,
+      promptText,
+      source: "telegram",
+      limit: 8,
+    });
+
+    if (!result.nodes.length) {
+      await tgCtx.reply("未找到相关记忆");
+      return;
+    }
+
+    const lines = result.nodes.map((node, index) => [
+      `${index + 1}. [${node.plane}/${node.temporalLevel}] ${node.summary}`,
+      `   canonical: ${truncate(node.canonicalUri, 120)}`,
+      `   family: ${truncate(node.familyUri, 120)}`,
+    ].join("\n"));
+
+    await tgCtx.reply(lines.join("\n\n"));
+  });
+
+  commandGroup.command("memoryadd", "显式写入记忆", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const text = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memoryadd").trim();
+    if (!text) {
+      await tgCtx.reply("用法：/memoryadd <内容>");
+      return;
+    }
+
+    const result = await memoryClient.add({
+      chatId: tgCtx.chat.id,
+      userId: tgCtx.chat.type === "private" ? tgCtx.chat.id : undefined,
+      text,
+      source: "telegram",
+    });
+
+    await tgCtx.reply(result.canonicalUris.length
+      ? `🧠 已写入 ${result.canonicalUris.length} 条记忆\n${result.canonicalUris.join("\n")}`
+      : "未写入任何记忆");
+  });
+
+  commandGroup.command("memoryexport", "导出记忆快照", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memoryexport").trim().toLowerCase();
+    const scopeKind = raw === "chat" ? "chat-local" : raw === "user" ? "user-global" : raw === "workspace" ? "workspace-global" : undefined;
+    const scopeId = scopeKind ? currentMemoryScopeId(tgCtx, scopeKind) : undefined;
+    const snapshot = await memoryClient.exportSnapshot(scopeKind && scopeId ? { scopeKind, scopeId } : undefined);
+    await tgCtx.reply([
+      `nodes: ${snapshot.nodes.length}`,
+      `entities: ${snapshot.entities.length}`,
+      `edges: ${snapshot.edges.length}`,
+      `rawTurns: ${snapshot.rawTurns.length}`,
+    ].join("\n"));
+  });
+
+  commandGroup.command("memoryexportfile", "导出记忆到文件", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memoryexportfile").trim();
+    const [scopeToken, ...pathParts] = raw.split(/\s+/).filter(Boolean);
+    const scopeKind = scopeToken ? parseMemoryScopeKeyword(scopeToken) : undefined;
+    const scopeId = scopeKind ? currentMemoryScopeId(tgCtx, scopeKind) : undefined;
+    const filePath = scopeKind
+      ? (pathParts.join(" ").trim() || undefined)
+      : (raw || undefined);
+    const result = await memoryClient.exportToFile(scopeKind && scopeId ? { scopeKind, scopeId, filePath } : { filePath });
+    await tgCtx.reply([
+      `ok: ${result.ok ? "yes" : "no"}`,
+      `file: ${result.filePath}`,
+      `nodes: ${result.nodes}`,
+      `entities: ${result.entities}`,
+      `edges: ${result.edges}`,
+      `rawTurns: ${result.rawTurns}`,
+    ].join("\n"));
+  });
+
+  commandGroup.command("memorybackup", "备份记忆数据库", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+    const filePath = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memorybackup").trim() || undefined;
+    const result = await memoryClient.backup({ filePath });
+    await tgCtx.reply([`ok: ${result.ok ? "yes" : "no"}`, `file: ${result.filePath}`].join("\n"));
+  });
+
+  commandGroup.command("memoryrepair", "修复失败的记忆 artifacts", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+    const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memoryrepair").trim();
+    const limit = Number(raw || 20);
+    const result = await memoryClient.repair({
+      chatId: tgCtx.chat.id,
+      userId: tgCtx.chat.type === "private" ? tgCtx.chat.id : undefined,
+      source: "telegram",
+      limit: Number.isFinite(limit) && limit > 0 ? Math.min(100, Math.floor(limit)) : 20,
+    });
+    await tgCtx.reply([`ok: ${result.ok ? "yes" : "no"}`, `scanned: ${result.scanned}`, `repaired: ${result.repaired}`].join("\n"));
+  });
+
+  commandGroup.command("memorypurgescope", "清空当前 scope 记忆", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memorypurgescope").trim().toLowerCase();
+    const scopeKind = raw === "chat" ? "chat-local" : raw === "user" ? "user-global" : raw === "workspace" ? "workspace-global" : undefined;
+    if (!scopeKind) {
+      await tgCtx.reply("用法：/memorypurgescope <chat|user|workspace>");
+      return;
+    }
+    const scopeId = currentMemoryScopeId(tgCtx, scopeKind);
+    if (!scopeId) {
+      await tgCtx.reply("当前上下文无法解析该 scope");
+      return;
+    }
+    const result = await memoryClient.purgeScope({ scopeKind, scopeId });
+    await tgCtx.reply(`🗑 已删除 ${result.deleted} 项`);
+  });
+
+  commandGroup.command("memoryintegrity", "检查记忆库完整性", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+    const result = await memoryClient.integrity();
+    await tgCtx.reply([`ok: ${result.ok ? "yes" : "no"}`, ...result.checks].join("\n"));
+  });
+
+  commandGroup.command("memorytrace", "追踪记忆", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const canonicalUri = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memorytrace").trim();
+    if (!canonicalUri) {
+      await tgCtx.reply("用法：/memorytrace <canonicalUri>");
+      return;
+    }
+
+    const trace = await memoryClient.trace({ canonicalUri });
+    const node = trace.node as Record<string, unknown> | undefined;
+    if (!node) {
+      await tgCtx.reply("未找到该记忆");
+      return;
+    }
+
+    const lines = [
+      `canonical: ${String(node.canonicalUri || canonicalUri)}`,
+      `family: ${String(node.familyUri || "")}`,
+      `plane: ${String(node.plane || "")}`,
+      `level: ${String(node.temporalLevel || "")}`,
+      `summary: ${String(node.summary || "")}`,
+      `entities: ${trace.entities.length}`,
+      `edges: ${trace.edges.length}`,
+    ].filter(Boolean);
+
+    await tgCtx.reply(lines.join("\n"));
+  });
+
+  commandGroup.command("memoryforget", "删除记忆", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+
+    const raw = extractCommandArgs(String((tgCtx.message as any)?.text || ""), "memoryforget").trim();
+    if (!raw) {
+      await tgCtx.reply("用法：/memoryforget <canonicalUri|family:...>");
+      return;
+    }
+
+    const result = raw.startsWith("family:")
+      ? await memoryClient.forget({ familyUri: raw.slice("family:".length).trim() })
+      : await memoryClient.forget({ canonicalUri: raw });
+
+    await tgCtx.reply(result.deleted > 0 ? `🗑 已删除 ${result.deleted} 条记忆` : "未删除任何记忆");
+  });
+
+  commandGroup.command("memoryflush", "刷新记忆后台队列", async (tgCtx) => {
+    if (!memoryClient.enabled) {
+      await tgCtx.reply("🧠 记忆未开启");
+      return;
+    }
+    const flushed = await memoryClient.flush("manual");
+    await tgCtx.reply(`🧠 flush 完成，处理 ${flushed} 项后台任务`);
   });
 
   commandGroup.command("new", "新建会话", async (tgCtx) => {
@@ -289,6 +535,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         await tgCtx.reply("⚠️ 新建会话已取消");
         return;
       }
+      await memoryClient.flush("new-session");
       await tgCtx.reply("🆕 已新建会话");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -469,8 +716,11 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const inst = pool.get(key);
 
     try {
-      const result = await inst.prompt(job.prompt);
+      const memoryPrompt = await buildMemoryPrompt(job.chatId, undefined, job.prompt, job.prompt, "cron");
+      const result = await inst.prompt(memoryPrompt.prompt);
+      const prepared = prepareCronReply(result.text, result.tools);
       await sendCronReply(job.chatId, result.text, result.tools);
+      ingestMemoryTurn(job.chatId, undefined, job.prompt, prepared.body, "cron", memoryPrompt.selectedUris);
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -872,6 +1122,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
   type PromptPayload = { message: string; images?: PiImage[] };
   type PromptBuildOptions = { supportsImages: boolean };
+  type PromptRequestSource = "telegram" | "cron";
 
   const imageSupportCache = new Map<number, { value: boolean; at: number }>();
   const draftCounterByChat = new Map<number, number>();
@@ -942,6 +1193,44 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       await status.editText(safe);
     } catch {
       await tgCtx.reply(safe).catch(() => {});
+    }
+  };
+
+  const buildMemoryPrompt = async (
+    chatId: number,
+    userId: number | undefined,
+    promptText: string,
+    originalPrompt: string,
+    source: PromptRequestSource,
+  ): Promise<{ prompt: string; selectedUris: string[] }> => {
+    return memoryClient.preparePrompt({
+      chatId,
+      userId,
+      promptText,
+      originalPrompt,
+      source,
+    });
+  };
+
+  const ingestMemoryTurn = (
+    chatId: number,
+    userId: number | undefined,
+    userText: string,
+    assistantText: string,
+    source: PromptRequestSource,
+    selectedMemoryUris: string[] = [],
+  ): void => {
+    try {
+      memoryClient.ingestTurn({
+        chatId,
+        userId,
+        userText,
+        assistantText,
+        source,
+        selectedMemoryUris,
+      });
+    } catch (err) {
+      log.warn(`chat${chatId} 记忆写入失败：${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -1253,6 +1542,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     tgCtx: BotContext,
     inst: ReturnType<PiPool["get"]>,
     makePayload: (opts: PromptBuildOptions) => Promise<PromptPayload>,
+    options: { memoryUserText: string; source?: PromptRequestSource },
   ): Promise<void> => {
     const ahead = inst.queuedCount + (inst.running ? 1 : 0);
     const chatId = tgCtx.chat?.id ?? 0;
@@ -1279,7 +1569,11 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     try {
       const supportsImages = await supportsImagesForChat(chatId, inst);
       const { message, images } = await makePayload({ supportsImages });
-      const promptMessage = message;
+      const memoryUserText = String(options.memoryUserText || "").trim() || message;
+      const source = options.source ?? "telegram";
+      const memoryPrompt = await buildMemoryPrompt(chatId, tgCtx.from?.id, memoryUserText, message, source);
+      const promptMessage = memoryPrompt.prompt;
+      const selectedMemoryUris = memoryPrompt.selectedUris;
 
       if (useStream) {
         const stream = useDraftStream
@@ -1308,8 +1602,9 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
           await stream.stopAndWait();
           const processed = await applyCronToolDirectives(tgCtx, result.text);
-
-          await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
+          const prepared = prepareReply(tgCtx, processed.text, result.tools, processed.warnings);
+          await sendPreparedReply(tgCtx, prepared, maxResponseLength);
+          ingestMemoryTurn(chatId, tgCtx.from?.id, memoryUserText, prepared.body, source, selectedMemoryUris);
         } finally {
           await stream.stopAndWait();
         }
@@ -1325,7 +1620,9 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       });
       await status?.delete().catch(() => {});
       const processed = await applyCronToolDirectives(tgCtx, result.text);
-      await sendReply(tgCtx, processed.text, result.tools, maxResponseLength, processed.warnings);
+      const prepared = prepareReply(tgCtx, processed.text, result.tools, processed.warnings);
+      await sendPreparedReply(tgCtx, prepared, maxResponseLength);
+      ingestMemoryTurn(chatId, tgCtx.from?.id, memoryUserText, prepared.body, source, selectedMemoryUris);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (message === "aborted") {
@@ -1393,8 +1690,11 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const key = chatKey(botKey, tgCtx.chat.id);
     const inst = pool.get(key);
 
-    await runPromptRequest(tgCtx, inst, async ({ supportsImages }) =>
-      buildPromptPayloadWithReplyContext(tgCtx, text, config.token, supportsImages),
+    await runPromptRequest(
+      tgCtx,
+      inst,
+      async ({ supportsImages }) => buildPromptPayloadWithReplyContext(tgCtx, text, config.token, supportsImages),
+      { memoryUserText: text },
     );
   });
 
@@ -1426,7 +1726,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         supportsImages,
         currentImages,
       );
-    });
+    }, { memoryUserText: caption });
   });
 
   // Generic files (documents)
@@ -1459,7 +1759,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
         currentImages,
         currentFilePaths,
       );
-    });
+    }, { memoryUserText: baseText });
   });
 
   // Sync command menu from command group definitions

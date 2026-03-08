@@ -10,6 +10,7 @@ export interface PiRpcOptions {
   piArgs: string[];
   sessionDir: string;
   continueSession: boolean;
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface PromptHooks {
@@ -196,6 +197,7 @@ export class PiRpc extends EventEmitter {
 
     this.proc = spawn(cmd, cmdArgs, {
       cwd: this.opts.cwd,
+      env: this.opts.env ? { ...process.env, ...this.opts.env } : process.env,
       stdio: ["pipe", "pipe", "pipe"]
     });
 

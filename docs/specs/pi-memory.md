@@ -1154,6 +1154,19 @@ Higher-level memory updates
   - 模型识别到旧记忆已过时、冲突或应修订
   - 复杂检索中需要主动发起 retrieve / reflect / rerank 控制
 
+**去重说明：**
+
+- Trigger E **不是第二条独立写入流水线**
+- 它只是在既有写侧流程中额外提供一个 `operation proposal` 输入源
+- 其输出仍必须回到统一的：
+  - `Raw Turn Buffer / candidate memory context`
+  - `Admission Control`
+  - `Operation Decision`
+  - `Dedup / Merge`
+  - `Canonical URI / family resolution`
+  - `Apply mutation`
+- 也就是说，模型主动 proposal 可以改变“写什么 / 怎么写”，但**不能改变写侧主路径本身**
+
 ### 10.7 What should NOT trigger writes
 
 - 单条问候
@@ -1328,12 +1341,16 @@ LLM 必须：
 - 或生成新的 `entity_uri`
 - 记录 mention -> entity 的置信度
 
-推荐使用混合策略：
+这里应显式采用 **Entity Resolution** 机制，而不是只做字符串去重。至少应考虑：
 
-1. lexical retrieval（label / alias）
-2. dense semantic retrieval（description / context embedding）
-3. entity reranking（基于句子上下文）
-4. 若仍不确定，则保留 unresolved mention，等待后续 merge 或人工纠偏
+1. 大小写、连字符、下划线、路径分隔符、标点的规范化
+2. alias map（如 `Pi Telegram` / `pi-telegram` / `pitg`）
+3. lexical candidate retrieval（label / alias）
+4. dense semantic retrieval（description / context embedding）
+5. entity reranking（基于句子上下文）
+6. unresolved mention 暂存与后续 merge
+
+也就是说，`entity_uri` 的稳定性不应仅依赖原始 mention 文本，而应依赖 **normalized label + entityType + resolution policy**。
 
 #### Entity extraction output
 
@@ -1900,6 +1917,171 @@ Post-update validation / trace
 - 先作为 `Pi-Telegram` 内部控制链路实现
 - 后续 Phase 4 再决定哪些操作值得暴露成显式 `memory_*` tools
 
+### 12.7.1 Non-overlap principle
+
+主动记忆链路必须被视为一个**控制覆盖层（control overlay）**，而不是另一套平行的 memory 子系统。
+
+它的职责是：
+
+- 对既有写侧流程给出 `operation proposal`
+- 对既有读侧流程给出 `retrieve / reflect / rerank / answer` 控制决策
+- 在受控条件下帮助系统决定“下一步做什么”
+
+它**不应重复实现**：
+
+- 一套新的 write pipeline
+- 一套新的 hybrid retrieval stack
+- 一套新的 context injection channel
+- 一套新的长期存储路径
+- 一套新的 dedup / merge / URI 体系
+
+换句话说：
+
+> Active Memory Operation Chain = 决策层 / 控制层
+>
+> 而不是存储层、检索层、注入层、写入层的替身。
+
+### 12.7.2 Relationship to write pipeline
+
+写侧必须坚持“**单一写入主路径**”原则。
+
+无论 candidate 来自：
+
+- 被动 extraction（`agent_end` / boundary flush / batch threshold）
+- 显式用户意图（未来 `memory_add`）
+- 模型主动 proposal（Trigger E）
+
+都必须汇合到同一条写入主路径：
+
+```text
+Candidate Extraction / Proposal Source
+  ↓
+Admission Control
+  ↓
+Operation Decision
+  ↓
+Canonical URI / Family Resolution
+  ↓
+Dedup / Merge
+  ↓
+Apply mutation
+  ↓
+Post-update validation / trace
+```
+
+因此：
+
+- 主动链路可以提出 `add / update / replace / delete / link / evolve`
+- 但真正执行 mutation 的仍是统一写侧执行器
+- 主动链路不得旁路 `Dedup / Merge`
+- 主动链路不得跳过 `family_uri` collapse
+- 主动链路不得直接写入 SQLite 主表
+
+### 12.7.3 Relationship to hybrid retrieval
+
+读侧主动控制也必须坚持“**单一检索主路径**”原则。
+
+也就是说：
+
+- `retrieve / reflect / rerank / answer` 是对既有 hybrid retrieval 的**控制回路**
+- 不是另一套与 planner / gating / rerank 并列的独立检索系统
+
+具体约束：
+
+- `retrieve`：只能触发现有 planner / clue generation / multi-channel retrieval 的再次迭代
+- `reflect`：只能分析证据缺口、冲突和覆盖不足，不能替代真正的 candidate retrieval
+- `rerank`：应复用现有 `Recall Gating` 与 `Hybrid Rerank / Evidence Selection`，而不是重新定义另一层重复排序
+- `answer`：只是停止继续检索，进入统一的 context assembly / answer phase
+
+因此，active read-side control 与 hybrid retrieval 的关系应为：
+
+```text
+Active controller
+  └─ controls iteration / stop conditions / evidence-gap state
+Hybrid retrieval stack
+  └─ owns planner / channels / gating / final evidence selection
+```
+
+### 12.7.4 Relationship to context injection
+
+主动记忆链路**不拥有独立注入通道**。
+
+无论记忆候选是：
+
+- 单轮 hybrid retrieval 选出
+- 还是经过多轮 `retrieve / reflect / rerank` 控制后选出
+
+最终都必须进入同一条注入路径：
+
+```text
+Selected memory set
+  ↓
+Context assembly
+  ↓
+Context pager / residency manager
+  ↓
+Single memory block injection
+  ↓
+current turn
+```
+
+这意味着：
+
+- active controller 不直接拼接第二块 memory prompt
+- active controller 不直接绕过 pager 往 prompt 塞额外内容
+- active controller 不单独维护另一份“主动注入上下文”
+- 最终对模型可见的 memory block 仍只有一套统一输出
+
+### 12.7.5 Relationship to injection triggers and write triggers
+
+需要明确区分三个层面：
+
+1. **写触发（write triggers）**
+   - 决定何时把 turn / candidate 纳入写侧流程
+   - 典型来源：`agent_end`、`session_before_switch`、`session_shutdown`
+2. **检索触发（read triggers）**
+   - 决定何时在回答前执行 recall
+   - 典型来源：`before_agent_start`
+3. **主动控制（active control）**
+   - 决定在上述既有触发内，是否继续 `retrieve / reflect / rerank`，或建议 `add / update / replace / delete`
+
+因此：
+
+- active controller 不新增新的 bridge lifecycle hook
+- active controller 不把 `before_agent_start` 变成第二种写入触发
+- active controller 不把 `agent_end` 变成第二种注入触发
+- active controller 只是附着在既有 trigger 之上的控制层
+
+### 12.7.6 Unified responsibility matrix
+
+为避免 future phase 里职责重叠，正式规定如下：
+
+| Layer | Owns | Must NOT own |
+|---|---|---|
+| Write Pipeline | raw turns、candidate extraction、admission、mutation apply、dedup/merge、store write | recall planning、context injection |
+| Hybrid Retrieval | planner、channels、gating、final rerank、context assembly input | store mutation、独立写入 |
+| Context Injection / Pager | final memory block assembly、budgeting、residency、single injection output | retrieval candidate generation、store mutation |
+| Active Memory Controller | operation proposal、iteration control、evidence-gap / stop control | second write pipeline、second retrieval stack、second injection channel |
+
+### 12.7.7 Single-path invariants
+
+future phase 中必须长期保持以下不变量：
+
+1. **只有一条正式写入主路径**
+2. **只有一条正式混合检索主路径**
+3. **只有一条正式 context injection 输出路径**
+4. **所有 active proposals 都必须回到既有主路径执行**
+5. **同一 turn 内最终只允许一个统一的 memory context block 进入 prompt**
+
+这五条不变量用于确保后续加入主动记忆控制后，不会和：
+
+- hybrid retrieval
+- context injection
+- write pipeline
+- URI dedupe / family collapse
+
+产生重复实现与语义漂移。
+
 ---
 
 ## 13. Retrieval Federation & Complexity-Aware Recall
@@ -1911,6 +2093,10 @@ Post-update validation / trace
 `pi-memory` 的检索应显式采用**混合检索栈（hybrid retrieval stack）**，并把检索、扩展、过滤、重排拆开。
 
 这里的“混合”**不只**指 dense / sparse / graph / temporal 多通道并行，也正式包含 **LLM 参与的检索控制层**。也就是说，混合检索至少由两部分组成：
+
+> 重要：
+> 若 future phase 引入 Active Memory Controller，则它对读侧的作用应理解为：
+> **控制混合检索的迭代、停止条件与证据缺口分析**，而不是再实现一套平行的 retrieval / rerank 系统。
 
 1. **程序化候选召回通道**
    - dense
@@ -2066,6 +2252,20 @@ clue / reformulation 不直接作为最终答案，而是帮助：
 - `complex` 查询可进入 retrieve–reflect–answer 闭环
 - 闭环检索默认仍受预算上限、迭代上限和 early stop 控制
 
+在实现上，closed-loop controller 不应只看“命中了几条”，还应结合 **Evidence Gap Analysis**：
+
+- 是否缺失目标 plane
+- 是否缺失目标 temporal level
+- 是否缺失 graph / temporal / dense 任一关键通道
+- 是否存在候选过少、过度同质化、证据全来自同一 family 的情况
+
+若 `evidence-gap state` 仍为严重缺口，则 controller 应优先：
+
+1. reformulate query / clues
+2. 扩大 graph propagation（如 PPR seed expansion）
+3. 调整 temporal window / decay policy
+4. 再进入下一轮 retrieve，而不是立即 answer
+
 ### 13.4 Stage 1: Base-level activation
 
 受 TiMem 启发，最低可用层的叶子节点先被激活。
@@ -2102,6 +2302,50 @@ baseScore =
 - `0.8 ~ 0.9`
 
 这与 TiMem 中“语义优先、关键词辅助”的思路一致。
+
+### 13.4.1 Algorithmic fusion stack
+
+在 production 级实现中，`pi-memory` 的 hybrid retrieval 不应停留在“把多路结果拼起来再 sort 一下”。正式算法栈建议如下：
+
+1. **RRF (Reciprocal Rank Fusion)**
+   - 用于融合 dense / sparse / graph / temporal / hierarchical propagation 各通道的候选顺序
+   - 适合作为 candidate fusion 的第一层，而不是直接把原始 score 做线性相加
+2. **ColBERT-style late interaction**
+   - 用于 query token 与 memory token 的 late interaction rerank
+   - 在没有真正 token-level dense index 时，可退化为 lexical late interaction fallback
+3. **Time-Decay / Decay Function**
+   - 用指数衰减或分层 half-life 控制 recency bias
+   - procedural / stable profile 的衰减应显著慢于 episodic memory
+4. **PPR (Personalized PageRank)**
+   - 在 graph channel 内，以 lexical/entity 命中的 seed nodes 为个性化起点做图传播
+   - 用于把 query anchoring 扩展到 family / entity / relation 邻域
+5. **MMR (Maximal Marginal Relevance)**
+   - 在最终选入上下文前做 diversity-aware selection
+   - 避免被同 family、同实体簇或同一句式近义项淹没
+6. **Novelty Score**
+   - 用于衡量某节点相对已选集合的新信息量
+   - 可基于 family 去重、实体重叠、关键词重叠和 late-interaction similarity 共同计算
+7. **Recursive Clustering**
+   - 用于把候选先按 plane / family / dominant entity 递归聚类，再做 representative-first selection
+   - 其目标不是替代排序，而是减少 candidate pool 的冗余结构
+8. **Evidence Gap Analysis**
+   - 用于判断当前候选是否缺失关键 plane / level / channel 证据
+   - 其输出应驱动 closed-loop retrieval controller 的下一轮 retrieve / reflect
+
+换句话说，正式链路建议理解为：
+
+```text
+candidate retrieval
+-> per-channel ranking
+-> RRF fusion
+-> PPR graph propagation
+-> ColBERT-style late interaction boost
+-> time-decay weighting
+-> recursive clustering
+-> MMR / novelty-aware selection
+-> gating
+-> final rerank
+```
 
 ### 13.5 Stage 2: Hierarchical propagation
 
@@ -2195,6 +2439,31 @@ planeScore =
 
 > 注：虽然 `chat` 通常更贴近当前上下文，但行为规则和用户长期偏好仍应优先出现。
 
+### 13.8.1 Diversity-aware final selection
+
+在 final selection 阶段，系统应显式使用：
+
+- **MMR**：平衡 relevance 与 redundancy
+- **Novelty Score**：衡量候选相对已选集合的信息增量
+- **Recursive Clustering**：先做 representative-first flatten，再进入 MMR
+
+其目的不是单纯“让结果分散”，而是避免以下三类失败：
+
+1. 同一 `family_uri` 的多个近义版本同时入选
+2. 同一 dominant entity 周围的 graph expansion 把上下文塞满
+3. 时间相近但信息同质的 episodic nodes 覆盖掉真正稳定的 profile / project / procedural memories
+
+因此，程序化 final selection 建议为：
+
+```text
+RRF fused candidates
+-> recursive clustering
+-> representative-first ordering
+-> MMR
+-> novelty-aware collapse
+-> optional LLM final rerank
+```
+
 在预排序之后，混合检索应再做一次 **LLM-first final rerank / evidence selection**：
 
 - 输入：已通过 gating 的候选集合
@@ -2253,6 +2522,16 @@ planeScore =
 - 更贴合 TiMem 的“层级召回后再组织输出”思路
 
 ### 13.10 Injection method
+
+注入阶段应坚持：**单一注入输出路径**。
+
+也就是说，无论最终 memory set 来自：
+
+- 单轮 hybrid retrieval
+- 多轮 retrieve–reflect–answer 闭环
+- active controller 参与后的 evidence refinement
+
+都只能进入同一个 `Context assembly -> pager -> injection` 流程，而不能额外再拼一份“主动记忆补充块”。
 
 注入方式优先级：
 

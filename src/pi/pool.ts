@@ -9,6 +9,7 @@ export interface PoolOptions {
   appendSystemPrompt?: string;
   sessionBaseDir: string;
   idleTimeoutMs: number;
+  getEnv?: (chatKey: string) => NodeJS.ProcessEnv | undefined;
 }
 
 export class PiPool {
@@ -52,6 +53,7 @@ export class PiPool {
       piArgs: this.buildPiArgs(),
       sessionDir: resolve(this.opts.sessionBaseDir, chatKey),
       continueSession,
+      env: this.opts.getEnv?.(chatKey),
     });
 
     inst.on("stderr", (msg) => {

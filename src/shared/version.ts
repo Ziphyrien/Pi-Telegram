@@ -12,6 +12,7 @@ export type InstallMethod = "pnpm" | "yarn" | "bun" | "npm" | "unknown";
 export interface PackageMeta {
   name: string;
   version: string;
+  repository?: string;
 }
 
 export interface ChangelogEntry {
@@ -24,6 +25,7 @@ export interface ChangelogEntry {
 const DEFAULT_PACKAGE_META: PackageMeta = {
   name: "pi-telegram",
   version: "0.0.0",
+  repository: "https://github.com/Ziphyrien/Pi-Telegram.git",
 };
 
 export const isBunBinary = import.meta.url.includes("$bunfs")
@@ -121,11 +123,15 @@ export function getPackageMeta(): PackageMeta {
     const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as {
       name?: string;
       version?: string;
+      repository?: string | { url?: string };
     };
 
     return {
       name: pkg.name || DEFAULT_PACKAGE_META.name,
       version: pkg.version || DEFAULT_PACKAGE_META.version,
+      repository: typeof pkg.repository === "string"
+        ? pkg.repository
+        : pkg.repository?.url || DEFAULT_PACKAGE_META.repository,
     };
   } catch {
     return { ...DEFAULT_PACKAGE_META };
