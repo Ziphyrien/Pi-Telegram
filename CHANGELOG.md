@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-12
+
+### Fixed
+
+- Fixed `src/main.ts` / `npm run dev` startup failures after the source tree refactor by resolving the pi theme module via package resolution instead of a broken relative `node_modules` path.
+
 ## [0.3.0] - 2026-03-12
 
 ### Breaking Changes
