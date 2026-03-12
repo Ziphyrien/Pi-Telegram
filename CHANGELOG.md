@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-12
+
+### Breaking Changes
+
+- Removed the built-in `pi-memory` system introduced in `0.2.0`, including its bridge/runtime integration and related memory features.
+
+### Changed
+
+- `/new` now always recreates the chat session by spawning a fresh pi RPC subprocess instead of resetting the existing process.
+
+### Fixed
+
+- Fixed RPC prompt error handling so only failed `prompt` responses terminate the active request, preventing follow-up messages from hitting `Agent is already processing` after an earlier error.
+
+## [0.2.0] - 2026-03-08
+
+### New Features
+
+- Added the built-in `pi-memory` long-term memory system for Pi-Telegram, including same-repo bridge integration, multi-scope SQLite storage, hybrid retrieval with RRF/MMR/Time-Decay/ColBERT/PPR/recursive clustering/novelty scoring/evidence-gap analysis, optional LLM-driven extraction and control, explicit memory operations, export/backup/repair/integrity tooling, and release-time bridge version synchronization.
+
 ## [0.1.3] - 2026-03-08
 
 ### Changed
