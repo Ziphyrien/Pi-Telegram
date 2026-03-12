@@ -1,4 +1,4 @@
-// src/attachment.ts — parse AI attachment blocks and build grammY media inputs
+// src/telegram/attachment.ts — parse AI attachment blocks and build grammY media inputs
 import { existsSync, statSync } from "node:fs";
 import { InputFile } from "grammy";
 

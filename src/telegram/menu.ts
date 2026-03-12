@@ -1,8 +1,8 @@
-// src/menu.ts — menu construction and per-chat menu state
+// src/telegram/menu.ts — menu construction and per-chat menu state
 import { Menu } from "@grammyjs/menu";
 import type { Context } from "grammy";
-import type { PiPool } from "./pool.js";
-import type { PiModelInfo } from "./types.js";
+import type { PiPool } from "../pi/pool.js";
+import type { PiModelInfo } from "../pi/types.js";
 
 export interface BotMenus<C extends Context> {
   modelMenu: Menu<C>;

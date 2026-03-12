@@ -1,4 +1,4 @@
-// src/tools.ts — AI tool registration & system-prompt append text
+// src/telegram/tool-prompt.ts — AI tool registration & system-prompt append text
 
 export interface AiToolDefinition {
   name: string;

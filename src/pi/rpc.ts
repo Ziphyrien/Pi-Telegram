@@ -1,8 +1,8 @@
-// src/pi-rpc.ts — single pi RPC subprocess wrapper
+// src/pi/rpc.ts — single pi RPC subprocess wrapper
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
+import { attachJsonlLineReader, serializeJsonLine } from "../shared/jsonl.js";
 import type { PiImage, PiModelInfo, PiRpcEvent, PiSessionStats, PromptResult } from "./types.js";
 
 export interface PiRpcOptions {

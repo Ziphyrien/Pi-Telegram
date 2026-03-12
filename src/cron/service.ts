@@ -1,10 +1,10 @@
-// src/cron-service.ts — persistent cron scheduler for Pi-Telegram
+// src/cron/service.ts — persistent cron scheduler for Pi-Telegram
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { Cron } from "croner";
-import { log } from "./log.js";
+import { log } from "../shared/log.js";
 import type {
   CronCreateInput,
   CronExecuteContext,
@@ -15,7 +15,7 @@ import type {
   CronServiceOptions,
   CronServiceStatus,
   CronStoreData,
-} from "./cron-types.js";
+} from "./types.js";
 
 const STORE_VERSION = 1 as const;
 const MAX_TIMER_SLICE_MS = 24 * 60 * 60 * 1000; // 24h

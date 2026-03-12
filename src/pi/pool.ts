@@ -1,7 +1,7 @@
-// src/pool.ts — pi RPC subprocess pool, one per chat
+// src/pi/pool.ts — pi RPC subprocess pool, one per chat
 import { resolve } from "node:path";
-import { PiRpc } from "./pi-rpc.js";
-import { log } from "./log.js";
+import { PiRpc } from "./rpc.js";
+import { log } from "../shared/log.js";
 
 export interface PoolOptions {
   cwd: string;

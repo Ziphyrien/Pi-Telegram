@@ -1,4 +1,4 @@
-// src/bot.ts — Telegram bot setup, only TG interaction logic
+// src/telegram/create-bot.ts — Telegram bot setup, only TG interaction logic
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -12,8 +12,8 @@ import { hydrateFiles } from "@grammyjs/files";
 import { CommandGroup } from "@grammyjs/commands";
 import { Menu } from "@grammyjs/menu";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
-import { log } from "./log.js";
-import { mdToPlainText, mdToTgHtml } from "./md2tg.js";
+import { log } from "../shared/log.js";
+import { mdToPlainText, mdToTgHtml } from "./format.js";
 import { createBotMenus } from "./menu.js";
 
 import {
@@ -25,15 +25,16 @@ import {
   extractTgReplyDirective,
   rememberReplyMessage,
   resolveReplyParameters,
-} from "./reply-tool.js";
+} from "./reply.js";
 import {
   extractTgCronDirectives,
   type TgCronDirective,
-} from "./cron-tool.js";
-import type { PiPool } from "./pool.js";
-import type { CronJobRecord, CronSchedule } from "./cron-types.js";
-import type { CronService } from "./cron-service.js";
-import type { BotConfig, PiImage } from "./types.js";
+} from "../cron/directives.js";
+import type { PiPool } from "../pi/pool.js";
+import type { CronJobRecord, CronSchedule } from "../cron/types.js";
+import type { CronService } from "../cron/service.js";
+import type { BotConfig } from "../shared/types.js";
+import type { PiImage } from "../pi/types.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
 

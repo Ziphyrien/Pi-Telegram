@@ -1,4 +1,4 @@
-// src/cron-types.ts — cron domain models
+// src/cron/types.ts — cron domain models
 
 export type CronScheduleKind = "at" | "every" | "cron";
 
