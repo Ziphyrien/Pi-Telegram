@@ -330,7 +330,7 @@ export class PiRpc extends EventEmitter {
           return;
         }
 
-        if (event.type === "response" && event.success === false) {
+        if (event.type === "response" && event.command === "prompt" && event.success === false) {
           finishReject(this.withStderrContext(this.extractRpcError(event)));
           return;
         }
