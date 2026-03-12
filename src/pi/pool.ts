@@ -25,11 +25,16 @@ export class PiPool {
     return this.spawn(chatKey, true);
   }
 
-  /** Spawn a fresh pi instance, no session restore */
-  getFresh(chatKey: string): PiRpc {
+  /** Spawn a fresh pi instance after stopping the current one. */
+  async getFresh(chatKey: string): Promise<PiRpc> {
     const existing = this.instances.get(chatKey);
     if (existing?.alive) {
+      const waitForExit = new Promise<void>((resolve) => existing.once("exit", () => resolve()));
       existing.kill();
+      await Promise.race([
+        waitForExit,
+        new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
+      ]);
     }
     return this.spawn(chatKey, false);
   }

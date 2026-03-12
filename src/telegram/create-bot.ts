@@ -271,24 +271,16 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
 
-    if (!inst?.alive) {
-      pool.getFresh(key);
-      await tgCtx.reply("🆕 已新建会话");
-      return;
+    if (inst?.alive) {
+      cancelQueuedSilently(chatId, inst);
+      await abortActivePrompt(chatId, inst, {
+        sendPartial: true,
+        showAbortNotice: true,
+      });
     }
 
-    cancelQueuedSilently(chatId, inst);
-    await abortActivePrompt(chatId, inst, {
-      sendPartial: true,
-      showAbortNotice: true,
-    });
-
     try {
-      const result = await inst.rpcNewSession();
-      if (result.cancelled) {
-        await tgCtx.reply("⚠️ 新建会话已取消");
-        return;
-      }
+      await pool.getFresh(key);
       await tgCtx.reply("🆕 已新建会话");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
