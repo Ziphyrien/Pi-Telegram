@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-04-18
+
 ### Fixed
 
 - Fixed long-running pi RPC prompts timing out after 60 seconds in Telegram bridging by waiting for `agent_end` without the `RpcClient.collectEvents()` timeout path.
