@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-18
+
+### Changed
+
+- Refactored the pi RPC bridge to use the official `RpcClient`, simplifying lifecycle handling and removing the obsolete manual JSONL helper.
+- Updated `@mariozechner/pi-coding-agent` to `^0.67.68`.
+
+### Added
+
+- `/status` now shows the current context usage.
+
 ## [0.3.2] - 2026-04-18
 
 ### Changed
