@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced CPU time in Telegram streaming draft preview rendering by caching repeated preview work, reusing the prejoined tool prefix, and avoiding unnecessary HTML/plain-text formatting on the hot path.
+- Added `scripts/benchmark-draft-preview.ts`, a focused microbenchmark for the streaming draft preview rendering path used by `createDraftStreamUpdater()`.
+
 ## [0.3.1] - 2026-03-12
 
 ### Fixed

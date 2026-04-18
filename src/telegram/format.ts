@@ -11,6 +11,19 @@ const md = new MarkdownIt({
   typographer: false,
 }).use(cjk);
 
+const defaultValidateLink = md.validateLink.bind(md);
+md.validateLink = (url: string) => {
+  const normalized = url.trim().toLowerCase();
+  if (
+    !normalized.startsWith("http://")
+    && !normalized.startsWith("https://")
+    && !normalized.startsWith("tg://")
+  ) {
+    return false;
+  }
+  return defaultValidateLink(url);
+};
+
 // Make markdown output closer to Telegram HTML (avoid unsupported tags)
 md.renderer.rules.softbreak = () => "\n";
 md.renderer.rules.hardbreak = () => "\n";
@@ -24,6 +37,12 @@ md.renderer.rules.list_item_open = () => "• ";
 md.renderer.rules.list_item_close = () => "\n";
 md.renderer.rules.heading_open = () => "<b>";
 md.renderer.rules.heading_close = () => "</b>\n";
+md.renderer.rules.strong_open = () => "<b>";
+md.renderer.rules.strong_close = () => "</b>";
+md.renderer.rules.em_open = () => "<i>";
+md.renderer.rules.em_close = () => "</i>";
+md.renderer.rules.s_open = () => "<s>";
+md.renderer.rules.s_close = () => "</s>";
 md.renderer.rules.hr = () => "\n────────\n";
 
 // Telegram Bot API HTML mode whitelist
@@ -74,12 +93,65 @@ const tgAllowed: sanitize.IOptions = {
   disallowedTagsMode: "discard",
 };
 
-export function mdToTgHtml(text: string): string {
-  const html = md.render(text || "");
-  const safe = sanitize(html, tgAllowed)
-    // normalize excessive blank lines
-    .replace(/\n{3,}/g, "\n\n")
+const plainAllowed: sanitize.IOptions = {
+  allowedTags: [],
+  allowedAttributes: {},
+  disallowedTagsMode: "discard",
+};
+
+function normalizeTelegramHtml(html: string): string {
+  return (html.includes("\n\n\n")
+    ? html.replace(/\n{3,}/g, "\n\n")
+    : html)
     .trim();
+}
+
+function isSimpleSafeTelegramRawTag(rawTag: string): boolean {
+  if (!rawTag || rawTag !== rawTag.trim()) return false;
+  const tag = rawTag[0] === "/" ? rawTag.slice(1) : rawTag;
+
+  switch (tag.toLowerCase()) {
+    case "b":
+    case "strong":
+    case "i":
+    case "em":
+    case "u":
+    case "ins":
+    case "s":
+    case "strike":
+    case "del":
+    case "tg-spoiler":
+    case "code":
+    case "pre":
+    case "blockquote":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function canSkipTelegramHtmlSanitize(text: string): boolean {
+  if (text.includes("&")) return false;
+
+  let open = text.indexOf("<");
+  if (open < 0) return true;
+
+  while (open >= 0) {
+    const close = text.indexOf(">", open + 1);
+    if (close < 0) return false;
+    if (!isSimpleSafeTelegramRawTag(text.slice(open + 1, close))) return false;
+    open = text.indexOf("<", close + 1);
+  }
+
+  return true;
+}
+
+export function mdToTgHtml(text: string): string {
+  const source = text || "";
+  const html = md.render(source);
+  const safe = canSkipTelegramHtmlSanitize(source)
+    ? normalizeTelegramHtml(html)
+    : normalizeTelegramHtml(sanitize(html, tgAllowed));
 
   // Telegram accepts plain text too; avoid empty HTML payloads
   return safe || "(无回复)";
@@ -87,14 +159,13 @@ export function mdToTgHtml(text: string): string {
 
 export function mdToPlainText(text: string): string {
   const html = md.render(text || "");
-  const plain = sanitize(html, {
-    allowedTags: [],
-    allowedAttributes: {},
-    disallowedTagsMode: "discard",
-  })
-    .replace(/\u00a0/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const plain = sanitize(html, plainAllowed);
+  const normalized = (plain.includes("\u00a0")
+    ? plain.replace(/\u00a0/g, " ")
+    : plain);
+  const collapsed = normalized.includes("\n\n\n")
+    ? normalized.replace(/\n{3,}/g, "\n\n")
+    : normalized;
 
-  return plain || "(无回复)";
+  return collapsed.trim() || "(无回复)";
 }
