@@ -1940,6 +1940,107 @@ interface StreamUpdater {
   dispose: () => void;
 }
 
+interface DraftPreviewRenderResult {
+  draftText: string;
+  getPlainText: () => string;
+  parseMode?: "HTML";
+  renderKey: string;
+}
+
+export interface DraftPreviewModel {
+  onTextDelta: (delta: string, fullText: string) => void;
+  onToolStart: (toolName?: string) => void;
+  onToolError: () => void;
+  render: (draftSupportsHtml?: boolean) => DraftPreviewRenderResult | null;
+}
+
+export function createDraftPreviewModel(maxLen: number): DraftPreviewModel {
+  // Must stay within Bot API text limit (4096)
+  const safeLimit = Math.min(Math.max(200, maxLen - 600), 3800);
+  let text = "";
+  const tools: string[] = [];
+  let toolBlock = "";
+  let lastPreview = "";
+  let lastDraftSupportsHtml: boolean | undefined;
+  let lastResult: DraftPreviewRenderResult | null = null;
+
+  return {
+    onTextDelta: (_delta, fullText) => {
+      text = stripProtocolTags(fullText);
+    },
+    onToolStart: (toolName) => {
+      if (toolName) tools.push(`🔧 ${toolName}`);
+      toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
+    },
+    onToolError: () => {
+      if (tools.length > 0) {
+        tools[tools.length - 1] = `${tools[tools.length - 1]} ❌`;
+      } else {
+        tools.push("🔧 执行失败 ❌");
+      }
+      toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
+    },
+    render: (draftSupportsHtml = true) => {
+      const preview = buildStreamingPreviewWithToolBlock(text, toolBlock, safeLimit);
+      if (!preview) {
+        lastPreview = "";
+        lastDraftSupportsHtml = draftSupportsHtml;
+        lastResult = null;
+        return null;
+      }
+      if (preview === lastPreview && draftSupportsHtml === lastDraftSupportsHtml) {
+        return lastResult;
+      }
+
+      let plainText: string | undefined;
+      const getPlainText = () => {
+        if (plainText !== undefined) return plainText;
+        plainText = mdToPlainText(preview).trim();
+        if (!plainText || plainText === "(无回复)") {
+          plainText = "";
+          return plainText;
+        }
+        if (plainText.length > 4096) {
+          plainText = `${plainText.slice(0, 4095)}…`;
+        }
+        return plainText;
+      };
+
+      if (draftSupportsHtml) {
+        const htmlDraftText = mdToTgHtml(preview).trim();
+        if (htmlDraftText && htmlDraftText !== "(无回复)") {
+          lastPreview = preview;
+          lastDraftSupportsHtml = draftSupportsHtml;
+          lastResult = {
+            draftText: htmlDraftText,
+            getPlainText,
+            parseMode: "HTML",
+            renderKey: `HTML:${htmlDraftText}`,
+          };
+          return lastResult;
+        }
+      }
+
+      const draftText = getPlainText();
+      if (!draftText) {
+        lastPreview = preview;
+        lastDraftSupportsHtml = draftSupportsHtml;
+        lastResult = null;
+        return null;
+      }
+
+      lastPreview = preview;
+      lastDraftSupportsHtml = draftSupportsHtml;
+      lastResult = {
+        draftText,
+        getPlainText,
+        renderKey: `plain:${draftText}`,
+      };
+      return lastResult;
+    },
+  };
+}
+
 async function callSendMessageDraft(
   api: BotContext["api"],
   chatId: number,
@@ -1986,10 +2087,7 @@ function createDraftStreamUpdater(
   onDraftFallback?: (err: unknown) => void,
 ): StreamUpdater {
   const minEditIntervalMs = 700;
-  // Must stay within Bot API text limit (4096)
-  const safeLimit = Math.min(Math.max(200, maxLen - 600), 3800);
-  let text = "";
-  const tools: string[] = [];
+  const previewModel = createDraftPreviewModel(maxLen);
   let lastRendered = "";
   let lastEditAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2001,26 +2099,10 @@ function createDraftStreamUpdater(
   const render = () => {
     if (disposed || disabled) return;
 
-    const preview = buildStreamingPreview(text, tools, safeLimit);
-    if (!preview) return;
+    const rendered = previewModel.render(draftSupportsHtml);
+    if (!rendered) return;
 
-    let plainDraftText = mdToPlainText(preview).trim();
-    if (!plainDraftText || plainDraftText === "(无回复)") return;
-    if (plainDraftText.length > 4096) {
-      plainDraftText = `${plainDraftText.slice(0, 4095)}…`;
-    }
-
-    let draftText = plainDraftText;
-    let parseMode: "HTML" | undefined;
-    if (draftSupportsHtml) {
-      const htmlDraftText = mdToTgHtml(preview).trim();
-      if (htmlDraftText && htmlDraftText !== "(无回复)") {
-        draftText = htmlDraftText;
-        parseMode = "HTML";
-      }
-    }
-
-    const renderKey = `${parseMode ?? "plain"}:${draftText}`;
+    const { draftText, getPlainText, parseMode, renderKey } = rendered;
     if (renderKey === lastRendered) return;
 
     lastRendered = renderKey;
@@ -2037,8 +2119,9 @@ function createDraftStreamUpdater(
           if (parseMode === "HTML" && isDraftHtmlParseError(sendErr)) {
             draftSupportsHtml = false;
             try {
-              await callSendMessageDraft(api, chatId, draftId, plainDraftText, messageThreadId);
-              lastRendered = `plain:${plainDraftText}`;
+              const plainText = getPlainText();
+              await callSendMessageDraft(api, chatId, draftId, plainText, messageThreadId);
+              lastRendered = `plain:${plainText}`;
               return;
             } catch (fallbackErr) {
               sendErr = fallbackErr;
@@ -2082,20 +2165,16 @@ function createDraftStreamUpdater(
   };
 
   return {
-    onTextDelta: (_delta, fullText) => {
-      text = stripProtocolTags(fullText);
+    onTextDelta: (delta, fullText) => {
+      previewModel.onTextDelta(delta, fullText);
       scheduleRender();
     },
     onToolStart: (toolName) => {
-      if (toolName) tools.push(`🔧 ${toolName}`);
+      previewModel.onToolStart(toolName);
       scheduleRender();
     },
     onToolError: () => {
-      if (tools.length > 0) {
-        tools[tools.length - 1] = `${tools[tools.length - 1]} ❌`;
-      } else {
-        tools.push("🔧 执行失败 ❌");
-      }
+      previewModel.onToolError();
       scheduleRender();
     },
     stopAndWait: async () => {
@@ -2118,7 +2197,7 @@ function createSilentStreamUpdater(): StreamUpdater {
   };
 }
 
-function stripProtocolTags(text: string): string {
+export function stripProtocolTags(text: string): string {
   let out = text;
 
   // Normal tags.
@@ -2133,8 +2212,7 @@ function stripProtocolTags(text: string): string {
   return out;
 }
 
-function buildStreamingPreview(text: string, tools: string[], limit: number): string {
-  const toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
+function buildStreamingPreviewWithToolBlock(text: string, toolBlock: string, limit: number): string {
   const available = Math.max(32, limit - toolBlock.length);
 
   if (!text) return toolBlock.trim();
@@ -2142,6 +2220,11 @@ function buildStreamingPreview(text: string, tools: string[], limit: number): st
 
   const tail = text.slice(-available);
   return `${toolBlock}…${tail}`;
+}
+
+export function buildStreamingPreview(text: string, tools: string[], limit: number): string {
+  const toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
+  return buildStreamingPreviewWithToolBlock(text, toolBlock, limit);
 }
 
 function formatCost(cost: number): string {
