@@ -15,6 +15,7 @@ import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-a
 import { log } from "../shared/log.js";
 import { mdToPlainText, mdToTgHtml } from "./format.js";
 import { createBotMenus } from "./menu.js";
+import { buildStatusLines } from "./status.js";
 
 import {
   extractTgAttachments,
@@ -34,7 +35,7 @@ import type { PiPool } from "../pi/pool.js";
 import type { CronJobRecord, CronSchedule } from "../cron/types.js";
 import type { CronService } from "../cron/service.js";
 import type { BotConfig } from "../shared/types.js";
-import type { PiImage } from "../pi/types.js";
+import type { PiImage, PiSessionStats } from "../pi/types.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
 
@@ -243,24 +244,26 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       try {
         const stats = await inst.getSessionStats();
         if (typeof stats.cost === "number" && stats.cost > 0) {
-          costLabel = `💰 花费: $${formatCost(stats.cost)}`;
+          cost = stats.cost;
         }
+        contextUsage = stats.contextUsage;
       } catch { /* ignore */ }
     }
 
     const cronSt = cron.status(chatId);
-
-    const lines = [
-      `${alive} | ${state}`,
-      providerLabel ? `🏢 供应商: ${providerLabel}` : "",
-      `🤖 模型: ${modelLabel}`,
-      `⚙️ 输出: ${menus.isStreamEnabled(chatId) ? "流式" : "非流式"}`,
-      thinkingLabel ? `🧠 思考: ${thinkingLabel}` : "",
-      sessionLabel ? `🗂 会话: ${sessionLabel}` : "",
-      costLabel,
-      `📊 活跃: ${pool.size}`,
-      `⏰ 定时: ${cronSt.enabled ? "开启" : "关闭"} | 任务 ${cronSt.totalJobs}（启用 ${cronSt.enabledJobs}）`,
-    ].filter(Boolean);
+    const lines = buildStatusLines({
+      alive: Boolean(inst?.alive),
+      processing: Boolean(inst?.streaming),
+      providerLabel,
+      modelLabel,
+      streamEnabled: menus.isStreamEnabled(chatId),
+      thinkingLabel,
+      sessionLabel,
+      cost,
+      contextUsage,
+      activeCount: pool.size,
+      cron: cronSt,
+    });
 
     await tgCtx.reply(lines.join("\n"));
   });
@@ -323,7 +326,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
 
-    if (!inst?.alive || !inst.busy) {
+    if (!inst?.alive || (!inst.running && inst.queuedCount === 0)) {
       await tgCtx.reply("当前无操作");
       return;
     }
@@ -2224,13 +2227,6 @@ function buildStreamingPreviewWithToolBlock(text: string, toolBlock: string, lim
 export function buildStreamingPreview(text: string, tools: string[], limit: number): string {
   const toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
   return buildStreamingPreviewWithToolBlock(text, toolBlock, limit);
-}
-
-function formatCost(cost: number): string {
-  if (cost >= 1) return cost.toFixed(2);
-  if (cost >= 0.01) return cost.toFixed(3);
-  if (cost >= 0.001) return cost.toFixed(4);
-  return cost.toPrecision(2);
 }
 
 function splitMessage(text: string, limit: number): string[] {
