@@ -216,14 +216,13 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const chatId = tgCtx.chat.id;
     const key = chatKey(botKey, chatId);
     const inst = pool.has(key);
-    const alive = inst?.alive ? "✅ 运行中" : "💤 未启动";
-    const state = inst?.streaming ? "⏳ 处理中" : "🟢 空闲";
     let modelLabel = "默认";
     let providerLabel = "";
     let thinkingSupported = true;
     let thinkingLabel = "";
     let sessionLabel = "";
-    let costLabel = "";
+    let cost: number | undefined;
+    let contextUsage: PiSessionStats["contextUsage"] | undefined;
 
     if (inst?.alive) {
       try {

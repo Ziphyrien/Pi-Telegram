@@ -29,10 +29,9 @@ export class PiPool {
   async getFresh(chatKey: string): Promise<PiRpc> {
     const existing = this.instances.get(chatKey);
     if (existing?.alive) {
-      const waitForExit = new Promise<void>((resolve) => existing.once("exit", () => resolve()));
       existing.kill();
       await Promise.race([
-        waitForExit,
+        new Promise<void>((resolve) => existing.once("exit", () => resolve())),
         new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
       ]);
     }
@@ -49,27 +48,17 @@ export class PiPool {
 
   private spawn(chatKey: string, continueSession: boolean): PiRpc {
     // Remove old dead instance listeners
-    const old = this.instances.get(chatKey);
-    if (old) old.removeAllListeners();
+    this.instances.get(chatKey)?.removeAllListeners();
 
-    const inst = new PiRpc(chatKey, {
+    const inst = new PiRpc({
       cwd: this.opts.cwd,
       piArgs: this.buildPiArgs(),
       sessionDir: resolve(this.opts.sessionBaseDir, chatKey),
       continueSession,
     });
 
-    inst.on("stderr", (msg) => {
-      if (this.instances.get(chatKey) === inst) {
-        log.error("pi", `${chatKey}: ${msg}`);
-      }
-    });
-
     inst.on("exit", (code) => {
-      // Only log if this instance is still the active one
-      if (this.instances.get(chatKey) === inst) {
-        log.pool(`pi exited for ${chatKey} (code=${code})`);
-      }
+      if (this.instances.get(chatKey) === inst) log.pool(`pi exited for ${chatKey} (code=${code})`);
     });
 
     inst.start();

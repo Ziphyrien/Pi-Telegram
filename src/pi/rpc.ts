@@ -1,9 +1,17 @@
 // src/pi/rpc.ts — single pi RPC subprocess wrapper
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { attachJsonlLineReader, serializeJsonLine } from "../shared/jsonl.js";
-import type { PiImage, PiModelInfo, PiRpcEvent, PiSessionStats, PromptResult } from "./types.js";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { RpcClient } from "@mariozechner/pi-coding-agent";
+import type { PiImage, PiModelInfo, PiSessionStats } from "./types.js";
+
+const piEntryJs = fileURLToPath(import.meta.resolve("@mariozechner/pi-coding-agent"));
+const piCliPath = resolve(dirname(piEntryJs), "cli.js");
+
+type PromptResult = { text: string; tools: string[] };
+type RpcClientEvent = Parameters<Parameters<RpcClient["onEvent"]>[0]>[0];
 
 export interface PiRpcOptions {
   cwd: string;
@@ -20,107 +28,57 @@ export interface PromptHooks {
 }
 
 export class PiRpc extends EventEmitter {
-  private proc: ChildProcess | null = null;
-  private _alive = false;
-  private _streaming = false;
-  private _lastActivity = Date.now();
+  private client: RpcClient | null = null;
+  private startPromise: Promise<void> | null = null;
+  alive = false;
+  streaming = false;
+  lastActivity = Date.now();
   private _queue: Array<{ run: () => void; reject: (err: Error) => void }> = [];
-  private _busy = false;
+  running = false;
   private _stderrTail: string[] = [];
-  private _detachStdoutReader: (() => void) | null = null;
   private _exitNotified = false;
 
-  constructor(
-    public readonly chatKey: string,
-    private readonly opts: PiRpcOptions,
-  ) {
+  constructor(private readonly opts: PiRpcOptions) {
     super();
   }
 
-  get alive() { return this._alive; }
-  get streaming() { return this._streaming; }
-  get running() { return this._busy; }
   get queuedCount() { return this._queue.length; }
-  get busy() { return this._busy || this._queue.length > 0; }
-  get lastActivity() { return this._lastActivity; }
 
   /** Cancel queued prompts only. Returns number of cancelled queued requests. */
   cancelQueued(): number {
-    let cancelled = 0;
-    while (this._queue.length) {
-      const queued = this._queue.shift();
-      queued?.reject(new Error("aborted"));
-      cancelled += 1;
-    }
-    return cancelled;
+    const queued = this._queue.splice(0);
+    queued.forEach(({ reject }) => reject(new Error("aborted")));
+    return queued.length;
   }
 
-  /** Cancel queued prompts and abort current operation */
-  abortAll(): void {
-    this.cancelQueued();
-    this.abort();
-  }
-
-  private appendStderr(chunk: string): void {
-    const lines = chunk
-      .split(/\r?\n/)
-      .map((x) => x.trim())
-      .filter(Boolean);
-    if (!lines.length) return;
-
-    this._stderrTail.push(...lines);
-    if (this._stderrTail.length > 8) {
-      this._stderrTail.splice(0, this._stderrTail.length - 8);
-    }
+  private stderrLines(extra = ""): string[] {
+    return Array.from(new Set([
+      ...this._stderrTail,
+      ...[extra, this.client?.getStderr() ?? ""].flatMap((chunk) =>
+        chunk.split(/\r?\n/).map((x) => x.trim()).filter(Boolean),
+      ),
+    ])).slice(-8);
   }
 
   private withStderrContext(base: string): Error {
-    if (!this._stderrTail.length) return new Error(base);
-    return new Error(`${base}\n${this._stderrTail.join("\n")}`);
+    const lines = this.stderrLines();
+    if (!lines.length) return new Error(base);
+    return new Error(`${base}\n${lines.join("\n")}`);
   }
 
   private notifyExit(code: number | null): void {
     if (this._exitNotified) return;
     this._exitNotified = true;
-    this._alive = false;
-    this._streaming = false;
-    this._detachStdoutReader?.();
-    this._detachStdoutReader = null;
+    this._stderrTail = this.stderrLines();
+    this.alive = false;
+    this.streaming = false;
+    this.startPromise = null;
+    this.client = null;
     this.emit("exit", code);
   }
 
   private toError(err: unknown): Error {
     return err instanceof Error ? err : new Error(String(err));
-  }
-
-  private summarizeRpcLine(line: string, max = 300): string {
-    const normalized = line
-      .replace(/\r/g, "\\r")
-      .replace(/\n/g, "\\n")
-      .replace(/\u2028/g, "\\u2028")
-      .replace(/\u2029/g, "\\u2029");
-    return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
-  }
-
-  private extractRpcError(event: PiRpcEvent, fallback = "RPC error"): string {
-    if (event.error) return event.error;
-    const data = event.data;
-    if (!data || typeof data !== "object") return fallback;
-
-    const direct = (data as Record<string, unknown>).error;
-    if (typeof direct === "string") return direct;
-
-    if (direct && typeof direct === "object") {
-      const msg = (direct as Record<string, unknown>).message;
-      if (typeof msg === "string" && msg.trim()) return msg;
-      const desc = (direct as Record<string, unknown>).description;
-      if (typeof desc === "string" && desc.trim()) return desc;
-    }
-
-    const msg = (data as Record<string, unknown>).message;
-    if (typeof msg === "string" && msg.trim()) return msg;
-
-    return fallback;
   }
 
   private extractTextFromContent(content: unknown): string | undefined {
@@ -134,347 +92,234 @@ export class PiRpc extends EventEmitter {
         return "";
       })
       .filter(Boolean);
-    if (!parts.length) return undefined;
-    return parts.join("\n").trim();
+    return parts.length ? parts.join("\n").trim() : undefined;
   }
 
   private extractAgentEndError(msgs: unknown[], last: any, streamHint = ""): string | undefined {
-    const fromLastErrorObj =
-      last?.error && typeof last.error === "object"
-        ? (last.error as Record<string, unknown>)
-        : undefined;
-
-    const direct =
-      (typeof last?.errorMessage === "string" && last.errorMessage)
-      || (typeof fromLastErrorObj?.message === "string" && fromLastErrorObj.message)
-      || (typeof fromLastErrorObj?.description === "string" && fromLastErrorObj.description)
-      || (typeof last?.error === "string" && last.error)
-      || (typeof last?.message === "string" && last.message)
-      || this.extractTextFromContent(last?.content)
-      || streamHint;
-
-    if (direct && String(direct).trim()) return String(direct).trim();
+    const errObj = last?.error && typeof last.error === "object"
+      ? (last.error as Record<string, unknown>)
+      : undefined;
+    const direct = [
+      typeof last?.errorMessage === "string" ? last.errorMessage : "",
+      typeof errObj?.message === "string" ? errObj.message : "",
+      typeof errObj?.description === "string" ? errObj.description : "",
+      typeof last?.error === "string" ? last.error : "",
+      typeof last?.message === "string" ? last.message : "",
+      this.extractTextFromContent(last?.content) ?? "",
+      streamHint,
+    ].find((value) => value.trim());
+    if (direct) return direct.trim();
 
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
       const msg = msgs[i] as any;
       if (!msg || typeof msg !== "object") continue;
+      const fallback = [
+        typeof msg.errorMessage === "string" ? msg.errorMessage : "",
+        msg.isError && typeof msg.error === "string" ? msg.error : "",
+        msg.isError ? this.extractTextFromContent(msg.content) ?? "" : "",
+        typeof msg.message === "string" ? msg.message : "",
+      ].find((value) => value.trim());
+      if (fallback) return fallback.trim();
+    }
+  }
 
-      if (typeof msg.errorMessage === "string" && msg.errorMessage.trim()) {
-        return msg.errorMessage.trim();
-      }
+  private async startClient(): Promise<void> {
+    mkdirSync(this.opts.sessionDir, { recursive: true });
 
-      if (msg.isError && typeof msg.error === "string" && msg.error.trim()) {
-        return msg.error.trim();
-      }
+    const client = new RpcClient({
+      cwd: this.opts.cwd,
+      cliPath: piCliPath,
+      args: [
+        "--session-dir", this.opts.sessionDir,
+        ...(this.opts.continueSession ? ["-c"] : []),
+        ...this.opts.piArgs,
+      ],
+    });
 
-      if (msg.isError) {
-        const txt = this.extractTextFromContent(msg.content);
-        if (txt) return txt;
-      }
+    this.client = client;
+    client.onEvent(() => { this.lastActivity = Date.now(); });
 
-      if (typeof msg.message === "string" && msg.message.trim()) {
-        return msg.message.trim();
-      }
+    try {
+      await client.start();
+    } catch (err) {
+      this._stderrTail = this.stderrLines(this.toError(err).message);
+      this.notifyExit(null);
+      throw err;
     }
 
-    return undefined;
+    const proc = (client as any).process as ChildProcess | null | undefined;
+    proc?.on("error", (err) => { this._stderrTail = this.stderrLines(this.toError(err).message); this.notifyExit(null); });
+    proc?.on("exit", (code) => { this.notifyExit(code); });
+  }
+
+  private async ensureStarted(): Promise<RpcClient> {
+    if (!this.startPromise) throw new Error("pi process not started");
+    try {
+      await this.startPromise;
+    } catch (err) {
+      throw this.withStderrContext(this.toError(err).message);
+    }
+    if (!this.alive || !this.client) {
+      throw this.withStderrContext("pi process not alive");
+    }
+    return this.client;
+  }
+
+  private withClient<T>(run: (client: RpcClient) => Promise<T>): Promise<T> {
+    return this.ensureStarted().then(run);
   }
 
   start(): void {
-    mkdirSync(this.opts.sessionDir, { recursive: true });
-
-    const args = [
-      "--mode", "rpc",
-      "--session-dir", this.opts.sessionDir,
-      ...(this.opts.continueSession ? ["-c"] : []),
-      ...this.opts.piArgs,
-    ];
-
-    const isWin = process.platform === "win32";
-    const cmd = isWin ? "cmd.exe" : "pi";
-    const cmdArgs = isWin ? ["/d", "/s", "/c", "pi", ...args] : args;
-
-    this.proc = spawn(cmd, cmdArgs, {
-      cwd: this.opts.cwd,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    this._alive = true;
+    if (this.startPromise) return;
+    this.alive = true;
     this._stderrTail = [];
     this._exitNotified = false;
-    this._detachStdoutReader?.();
-    this._detachStdoutReader = null;
-
-    this._detachStdoutReader = attachJsonlLineReader(this.proc.stdout!, (line) => {
-      if (!line.trim()) return;
-      try {
-        const event: PiRpcEvent = JSON.parse(line);
-        this._lastActivity = Date.now();
-        this.emit("event", event);
-      } catch (err) {
-        const summary = this.summarizeRpcLine(line);
-        const message = err instanceof Error ? err.message : String(err);
-        this.appendStderr(`invalid RPC stdout line: ${summary}`);
-        this.emit("stderr", `invalid RPC stdout line ignored (${message}): ${summary}`);
-      }
-    });
-
-    this.proc.stderr?.on("data", (chunk: Buffer) => {
-      const raw = chunk.toString();
-      this.appendStderr(raw);
-      const msg = raw.trim();
-      if (msg) this.emit("stderr", msg);
-    });
-
-    this.proc.on("error", (err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.appendStderr(`spawn error: ${msg}`);
-      this.notifyExit(null);
-    });
-
-    this.proc.on("exit", (code) => {
-      this.notifyExit(code);
-    });
-  }
-
-  private send(cmd: Record<string, unknown>): void {
-    if (!this._alive || !this.proc?.stdin) {
-      throw this.withStderrContext("pi process not alive");
-    }
-    this.proc.stdin.write(serializeJsonLine(cmd));
-    this._lastActivity = Date.now();
+    this.startPromise = this.startClient();
   }
 
   prompt(message: string, images?: PiImage[], hooks?: PromptHooks): Promise<PromptResult> {
     return new Promise<PromptResult>((outerResolve, outerReject) => {
+      const advanceQueue = () => {
+        this.running = false;
+        this._queue.shift()?.run();
+      };
       const task = () => {
-        this._busy = true;
+        this.running = true;
         try { hooks?.onStart?.(); } catch { /* ignore hook error */ }
         this._doPrompt(message, images, hooks)
-          .then((result) => { outerResolve(result); this._next(); })
-          .catch((err) => { outerReject(err); this._next(); });
+          .then(outerResolve, outerReject)
+          .finally(advanceQueue);
       };
 
-      if (this._busy) {
+      if (this.running) {
         this._queue.push({ run: task, reject: outerReject });
-      } else {
-        task();
+        return;
       }
+      task();
     });
   }
 
-  private _next(): void {
-    this._busy = false;
-    const next = this._queue.shift();
-    if (next) next.run();
-  }
+  private async _doPrompt(message: string, images?: PiImage[], hooks?: PromptHooks): Promise<PromptResult> {
+    const client = await this.ensureStarted();
+    let text = "";
+    const tools: string[] = [];
+    let streamErrorHint = "";
+    let endMessages: unknown[] = [];
 
-  private _doPrompt(message: string, images?: PiImage[], hooks?: PromptHooks): Promise<PromptResult> {
-    return new Promise((resolve, reject) => {
-      let text = "";
-      const toolInfo: string[] = [];
-      let streamErrorHint = "";
-      let done = false;
-
-      const cleanup = () => {
-        this.removeListener("event", onEvent);
-        this.removeListener("exit", onExit);
-      };
-
-      const finishResolve = (result: PromptResult) => {
-        if (done) return;
-        done = true;
-        this._streaming = false;
-        cleanup();
-        resolve(result);
-      };
-
-      const finishReject = (err: unknown) => {
-        if (done) return;
-        done = true;
-        this._streaming = false;
-        cleanup();
-        reject(this.toError(err));
-      };
-
-      const onEvent = (event: PiRpcEvent) => {
-        if (event.type === "message_update") {
-          const streamEvent = event.assistantMessageEvent as any;
-          if (streamEvent?.type === "text_delta") {
-            const delta = streamEvent.delta ?? "";
-            text += delta;
-            try { hooks?.onTextDelta?.(delta, text); } catch { /* ignore hook error */ }
-          } else if (streamEvent?.type === "error") {
-            const errObj = streamEvent?.error && typeof streamEvent.error === "object"
-              ? (streamEvent.error as Record<string, unknown>)
-              : undefined;
-            streamErrorHint =
-              (typeof errObj?.message === "string" && errObj.message)
-              || (typeof errObj?.description === "string" && errObj.description)
-              || (typeof streamEvent?.message === "string" && streamEvent.message)
-              || (typeof streamEvent?.reason === "string" && streamEvent.reason)
-              || streamErrorHint;
-          }
-          return;
-        }
-
-        if (event.type === "tool_execution_start") {
-          toolInfo.push(`🔧 ${event.toolName}`);
-          try { hooks?.onToolStart?.(event.toolName); } catch { /* ignore hook error */ }
-          return;
-        }
-
-        if (event.type === "tool_execution_end" && event.isError) {
-          toolInfo.push("  ❌ error");
-          try { hooks?.onToolError?.(event.toolName); } catch { /* ignore hook error */ }
-          return;
-        }
-
-        if (event.type === "response" && event.command === "prompt" && event.success === false) {
-          finishReject(this.withStderrContext(this.extractRpcError(event)));
-          return;
-        }
-
-        if (event.type !== "agent_end") return;
-
-        const msgs = (event.messages as any[]) ?? [];
-        const last = msgs[msgs.length - 1] as any;
-        const stopReason = String(last?.stopReason || "").toLowerCase();
-
-        if (stopReason === "aborted") {
-          finishReject(new Error("aborted"));
-          return;
-        }
-
-        if (stopReason === "error" || stopReason === "failed" || last?.isError) {
-          const errMsg = this.extractAgentEndError(msgs, last, streamErrorHint)
-            || (stopReason ? `Agent ended with stopReason=${stopReason}` : "Agent ended with error");
-          finishReject(this.withStderrContext(errMsg));
-          return;
-        }
-
-        finishResolve({ text, tools: toolInfo });
-      };
-
-      const onExit = (code: number | null) => {
-        finishReject(this.withStderrContext(`pi exited with code ${code}`));
-      };
-
-      this.on("event", onEvent);
+    let detachExit = () => {};
+    const exitPromise = new Promise<never>((_, reject) => {
+      const onExit = (code: number | null) => reject(this.withStderrContext(`pi exited with code ${code}`));
       this.once("exit", onExit);
-
-      const cmd: Record<string, unknown> = { type: "prompt", message };
-      if (images?.length) cmd.images = images;
-      if (this._streaming) cmd.streamingBehavior = "followUp";
-      this._streaming = true;
-
-      try {
-        this.send(cmd);
-      } catch (err) {
-        finishReject(err);
-      }
+      detachExit = () => this.removeListener("exit", onExit);
     });
-  }
 
-  newSession(): void {
-    this.send({ type: "new_session" });
-  }
-
-  async rpcNewSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-    const cmd: Record<string, unknown> = { type: "new_session" };
-    if (parentSession) cmd.parentSession = parentSession;
-    const res = await this.rpc(cmd);
-    return {
-      cancelled: Boolean((res as any).cancelled),
-    };
-  }
-
-  /** Generic RPC command that waits for a response */
-  rpc(cmd: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return new Promise((resolve, reject) => {
-      let done = false;
-
-      const cleanup = () => {
-        this.removeListener("event", onEvent);
-        this.removeListener("exit", onExit);
-      };
-
-      const finishResolve = (data: Record<string, unknown>) => {
-        if (done) return;
-        done = true;
-        cleanup();
-        resolve(data);
-      };
-
-      const finishReject = (err: unknown) => {
-        if (done) return;
-        done = true;
-        cleanup();
-        reject(this.toError(err));
-      };
-
-      const onEvent = (event: PiRpcEvent) => {
-        if (event.type !== "response" || event.command !== cmd.type) return;
-        if (event.success) {
-          finishResolve(event.data ?? {});
-        } else {
-          finishReject(this.withStderrContext(this.extractRpcError(event)));
+    const detachEvent = client.onEvent((event: RpcClientEvent) => {
+      if (event.type === "message_update") {
+        const streamEvent = event.assistantMessageEvent as any;
+        if (streamEvent?.type === "text_delta") {
+          const delta = streamEvent.delta ?? "";
+          text += delta;
+          try { hooks?.onTextDelta?.(delta, text); } catch { /* ignore hook error */ }
+        } else if (streamEvent?.type === "error") {
+          const errObj = streamEvent?.error && typeof streamEvent.error === "object"
+            ? (streamEvent.error as Record<string, unknown>)
+            : undefined;
+          streamErrorHint =
+            (typeof errObj?.message === "string" && errObj.message)
+            || (typeof errObj?.description === "string" && errObj.description)
+            || (typeof streamEvent?.message === "string" && streamEvent.message)
+            || (typeof streamEvent?.reason === "string" && streamEvent.reason)
+            || streamErrorHint;
         }
-      };
+        return;
+      }
 
-      const onExit = () => {
-        finishReject(this.withStderrContext("pi exited"));
-      };
+      if (event.type === "tool_execution_start") {
+        tools.push(`🔧 ${event.toolName}`);
+        try { hooks?.onToolStart?.(event.toolName); } catch { /* ignore hook error */ }
+        return;
+      }
 
-      this.on("event", onEvent);
-      this.once("exit", onExit);
-      try {
-        this.send(cmd);
-      } catch (err) {
-        finishReject(err);
+      if (event.type === "tool_execution_end" && event.isError) {
+        tools.push("  ❌ error");
+        try { hooks?.onToolError?.(event.toolName); } catch { /* ignore hook error */ }
+        return;
+      }
+
+      if (event.type === "agent_end") {
+        endMessages = (event as any).messages ?? [];
       }
     });
+
+    this.streaming = true;
+    try {
+      await Promise.race([
+        client.promptAndWait(message, images as any),
+        exitPromise,
+      ]);
+    } catch (err) {
+      throw this.withStderrContext(this.toError(err).message);
+    } finally {
+      this.streaming = false;
+      detachEvent();
+      detachExit();
+    }
+
+    const last = endMessages.at(-1) as any;
+    const stopReason = String(last?.stopReason || "").toLowerCase();
+
+    if (stopReason === "aborted") {
+      throw new Error("aborted");
+    }
+
+    if (stopReason === "error" || stopReason === "failed" || last?.isError) {
+      const errMsg = this.extractAgentEndError(endMessages, last, streamErrorHint)
+        || (stopReason ? `Agent ended with stopReason=${stopReason}` : "Agent ended with error");
+      throw this.withStderrContext(errMsg);
+    }
+
+    return { text, tools };
   }
 
   async getAvailableModels(): Promise<PiModelInfo[]> {
-    const res = await this.rpc({ type: "get_available_models" });
-    return (res as any).models ?? [];
+    return this.withClient((client) => client.getAvailableModels() as unknown as Promise<PiModelInfo[]>);
   }
 
   async getState(): Promise<Record<string, unknown>> {
-    return this.rpc({ type: "get_state" });
+    return this.withClient((client) => client.getState() as unknown as Promise<Record<string, unknown>>);
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    const res = await this.rpc({ type: "get_session_stats" });
-    return res as PiSessionStats;
+    return this.withClient((client) => client.getSessionStats() as unknown as Promise<PiSessionStats>);
   }
 
-  async rpcSetModel(provider: string, modelId: string): Promise<void> {
-    await this.rpc({ type: "set_model", provider, modelId });
+  rpcSetModel(provider: string, modelId: string): Promise<void> {
+    return this.withClient(async (client) => { await client.setModel(provider, modelId); });
   }
 
-  async rpcSetThinkingLevel(level: string): Promise<void> {
-    await this.rpc({ type: "set_thinking_level", level });
-  }
-
-  setModel(provider: string, modelId: string): void {
-    this.send({ type: "set_model", provider, modelId });
-  }
-
-  setThinkingLevel(level: string): void {
-    this.send({ type: "set_thinking_level", level });
+  rpcSetThinkingLevel(level: string): Promise<void> {
+    return this.withClient((client) => client.setThinkingLevel(level as any));
   }
 
   abort(): void {
-    if (this._alive) this.send({ type: "abort" });
+    if (!this.alive) return;
+    void this.withClient((client) => client.abort()).catch(() => {});
   }
 
   kill(): void {
-    if (!this.proc || !this._alive) return;
+    if (!this.alive) return;
+    const client = this.client;
+    const proc = (client as any)?.process as ChildProcess | null | undefined;
     this.abort();
     setTimeout(() => {
-      if (this._alive) this.proc?.kill("SIGTERM");
+      if (!this.alive) return;
+      if (client) {
+        void client.stop().catch(() => {
+          if (this.alive) proc?.kill("SIGTERM");
+        });
+        return;
+      }
+      proc?.kill("SIGTERM");
     }, 2000);
   }
 }

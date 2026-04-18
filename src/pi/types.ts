@@ -6,26 +6,6 @@ export interface PiImage {
   mimeType: string;
 }
 
-export interface PromptResult {
-  text: string;
-  tools: string[];
-}
-
-export interface PiRpcEvent {
-  type: string;
-  command?: string;
-  success?: boolean;
-  error?: string;
-  data?: Record<string, unknown>;
-  assistantMessageEvent?: {
-    type: string;
-    delta?: string;
-  };
-  toolName?: string;
-  isError?: boolean;
-  messages?: unknown[];
-}
-
 export interface PiModelInfo {
   id: string;
   name: string;
@@ -34,14 +14,17 @@ export interface PiModelInfo {
   contextWindow?: number;
 }
 
+export type PiTokenStats = Partial<Record<"total" | "input" | "output" | "cacheRead" | "cacheWrite", number>>;
+
+export interface PiContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}
+
 export interface PiSessionStats {
   cost?: number;
   totalMessages?: number;
-  tokens?: {
-    total?: number;
-    input?: number;
-    output?: number;
-    cacheRead?: number;
-    cacheWrite?: number;
-  };
+  tokens?: PiTokenStats;
+  contextUsage?: PiContextUsage;
 }

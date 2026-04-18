@@ -30,8 +30,8 @@ importers:
         specifier: ^2.0.3
         version: 2.0.3(grammy@1.42.0)
       '@mariozechner/pi-coding-agent':
-        specifier: ^0.55.0
-        version: 0.55.4(ws@8.20.0)(zod@3.25.76)
+        specifier: ^0.67.68
+        version: 0.67.68(ws@8.20.0)(zod@3.25.76)
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
@@ -69,8 +69,8 @@ importers:
 
 packages:
 
-  '@anthropic-ai/sdk@0.73.0':
-    resolution: {integrity: sha512-URURVzhxXGJDGUGFunIOtBlSl7KWvZiAAKY/ttTkZAkXT9bTPqdk2eK0b8qqSxXpikh3QKPnPYpiyX98zf5ebw==}
+  '@anthropic-ai/sdk@0.90.0':
+    resolution: {integrity: sha512-MzZtPabJF1b0FTDl6Z6H5ljphPwACLGP13lu8MTiB8jXaW/YXlpOp+Po2cVou3MPM5+f5toyLnul9whKCy7fBg==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -498,26 +498,26 @@ packages:
     resolution: {integrity: sha512-faGUlTcXka5l7rv0lP3K3vGW/ejRuOS24RR2aSFWREUQqzjgdsuWNo/IiPqL3kWRGt6Ahl2+qcDAwtdeWeuGUw==}
     hasBin: true
 
-  '@mariozechner/pi-agent-core@0.55.4':
-    resolution: {integrity: sha512-g/rZMrP8X4rjqzU4kCV5LLFqOKR0jrYW3bNG7+lpENOVn6jU2GDpq8MIT2SacT76uPKQhVJII/oI9evGpnGI3w==}
+  '@mariozechner/pi-agent-core@0.67.68':
+    resolution: {integrity: sha512-anwFuzeUL7Qjbyih4DWY7w1zrOTrBxaz1L6+duLUuuzpHOun0EiP4KWIGTXPT5oJA7ZaeRNTyXJ7PlWfGQG33g==}
     engines: {node: '>=20.0.0'}
 
-  '@mariozechner/pi-ai@0.55.4':
-    resolution: {integrity: sha512-q6fWN66N5wpYl/ri54v2Q3QBEz04+nBY67LmatM0xK3TKVgmeGPyQ1YXmRlyb5KhHxMDhNMxChkcHBABzfTi6g==}
-    engines: {node: '>=20.0.0'}
-    hasBin: true
-
-  '@mariozechner/pi-coding-agent@0.55.4':
-    resolution: {integrity: sha512-l/5NySVD1RplhzC3ssd/GtZlxkKKu34vY5VlT+m1mUBqYupBChitEwartVJR5znHoe02LtLXj4G6akOgyd36Ww==}
+  '@mariozechner/pi-ai@0.67.68':
+    resolution: {integrity: sha512-DWWQmcb3IV3mbGXmzYBScfKA6kA52n/stY029eiBikrIxVT7DGLG6n7KSvTA2R4qBSgi1iFL3nGHtwxmtIn6Lg==}
     engines: {node: '>=20.0.0'}
     hasBin: true
 
-  '@mariozechner/pi-tui@0.55.4':
-    resolution: {integrity: sha512-LXoa0CV58lEfzbjXyuUMa4KwoPTzTegPZJEEzuc9p7LnlIn4/eBebhTXQmQ7Hxo+/zb3zpy2qoynKpKcEas9GQ==}
+  '@mariozechner/pi-coding-agent@0.67.68':
+    resolution: {integrity: sha512-Bai2yUBpgjftqGvg3GNV9pxcMAatqJwQYsqM+7j39+tm+IpoW7hbMBnzXZQvykAwXIrTXpZFF5yp5ajeDI5Atg==}
+    engines: {node: '>=20.6.0'}
+    hasBin: true
+
+  '@mariozechner/pi-tui@0.67.68':
+    resolution: {integrity: sha512-RhcMaGz88lNOm5+9yx+YCIfXZALLbMxB2cwsoHzyOzs+OZAItw8tz6xJZPAnX0RHY+ENQEGMMDY9TF6pxxnkbA==}
     engines: {node: '>=20.0.0'}
 
-  '@mistralai/mistralai@1.10.0':
-    resolution: {integrity: sha512-tdIgWs4Le8vpvPiUEWne6tK0qbVc+jMenujnvTqOjogrJUsCSQhus0tHTU1avDDh5//Rq2dFgP9mWRAdIEoBqg==}
+  '@mistralai/mistralai@2.2.0':
+    resolution: {integrity: sha512-JQUGIXjFWnw/J9LpTSf/ZXwVW3Sh8FBAcfTo5QvAHqkl4CfSiIwnjRJhMoAFcP6ncCe84YPU1ncDGX+p3OXnfg==}
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -799,6 +799,10 @@ packages:
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
     engines: {node: '>=8'}
+
+  ansi-regex@6.2.2:
+    resolution: {integrity: sha512-Bq3SmSpyFHaWjPk8If9yc6svM8c56dB5BAtW4Qbw5jHTwwXXcTLoRMkpDJp6VL0XzlWaCHTXrkFURMYmD0sLqg==}
+    engines: {node: '>=12'}
 
   ansi-styles@4.3.0:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
@@ -1201,8 +1205,8 @@ packages:
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
 
-  openai@6.10.0:
-    resolution: {integrity: sha512-ITxOGo7rO3XRMiKA5l7tQ43iNNu+iXGFAcf2t+aWVzzqRaS0i7m1K2BhxNdaveB+5eENhO0VY1FkiZzhBk4v3A==}
+  openai@6.26.0:
+    resolution: {integrity: sha512-zd23dbWTjiJ6sSAX6s0HrCZi41JwTA1bQVs0wLQPZ2/5o2gxOJA5wh7yOAUgwYybfhDXyhwlpeQf7Mlgx8EOCA==}
     hasBin: true
     peerDependencies:
       ws: ^8.18.0
@@ -1338,6 +1342,10 @@ packages:
     resolution: {integrity: sha512-Y38VPSHcqkFrCpFnQ9vuSXmquuv5oXOKpGeT6aGrr3o3Gc9AlVa6JBfUSOCnbxGGZF+/0ooI7KrPuUSztUdU5A==}
     engines: {node: '>=8'}
 
+  strip-ansi@7.2.0:
+    resolution: {integrity: sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==}
+    engines: {node: '>=12'}
+
   strnum@2.2.3:
     resolution: {integrity: sha512-oKx6RUCuHfT3oyVjtnrmn19H1SiCqgJSg+54XqURKp5aCMbrXrhLjRN9TjuwMjiYstZ0MzDrHqkGZ5dFTKd+zg==}
 
@@ -1392,6 +1400,10 @@ packages:
   undici@7.25.0:
     resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
     engines: {node: '>=20.18.1'}
+
+  uuid@11.1.0:
+    resolution: {integrity: sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A==}
+    hasBin: true
 
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
@@ -1456,7 +1468,7 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/sdk@0.73.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.90.0(zod@3.25.76)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
@@ -2015,9 +2027,9 @@ snapshots:
       std-env: 3.10.0
       yoctocolors: 2.1.2
 
-  '@mariozechner/pi-agent-core@0.55.4(ws@8.20.0)(zod@3.25.76)':
+  '@mariozechner/pi-agent-core@0.67.68(ws@8.20.0)(zod@3.25.76)':
     dependencies:
-      '@mariozechner/pi-ai': 0.55.4(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-ai': 0.67.68(ws@8.20.0)(zod@3.25.76)
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
       - aws-crt
@@ -2027,17 +2039,17 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.55.4(ws@8.20.0)(zod@3.25.76)':
+  '@mariozechner/pi-ai@0.67.68(ws@8.20.0)(zod@3.25.76)':
     dependencies:
-      '@anthropic-ai/sdk': 0.73.0(zod@3.25.76)
+      '@anthropic-ai/sdk': 0.90.0(zod@3.25.76)
       '@aws-sdk/client-bedrock-runtime': 3.1032.0
       '@google/genai': 1.50.1
-      '@mistralai/mistralai': 1.10.0
+      '@mistralai/mistralai': 2.2.0
       '@sinclair/typebox': 0.34.49
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       chalk: 5.6.2
-      openai: 6.10.0(ws@8.20.0)(zod@3.25.76)
+      openai: 6.26.0(ws@8.20.0)(zod@3.25.76)
       partial-json: 0.1.7
       proxy-agent: 6.5.0
       undici: 7.25.0
@@ -2051,13 +2063,14 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-coding-agent@0.55.4(ws@8.20.0)(zod@3.25.76)':
+  '@mariozechner/pi-coding-agent@0.67.68(ws@8.20.0)(zod@3.25.76)':
     dependencies:
       '@mariozechner/jiti': 2.6.5
-      '@mariozechner/pi-agent-core': 0.55.4(ws@8.20.0)(zod@3.25.76)
-      '@mariozechner/pi-ai': 0.55.4(ws@8.20.0)(zod@3.25.76)
-      '@mariozechner/pi-tui': 0.55.4
+      '@mariozechner/pi-agent-core': 0.67.68(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-ai': 0.67.68(ws@8.20.0)(zod@3.25.76)
+      '@mariozechner/pi-tui': 0.67.68
       '@silvia-odwyer/photon-node': 0.3.4
+      ajv: 8.18.0
       chalk: 5.6.2
       cli-highlight: 2.1.11
       diff: 8.0.4
@@ -2069,6 +2082,9 @@ snapshots:
       marked: 15.0.12
       minimatch: 10.2.5
       proper-lockfile: 4.1.2
+      strip-ansi: 7.2.0
+      undici: 7.25.0
+      uuid: 11.1.0
       yaml: 2.8.3
     optionalDependencies:
       '@mariozechner/clipboard': 0.3.2
@@ -2081,19 +2097,24 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-tui@0.55.4':
+  '@mariozechner/pi-tui@0.67.68':
     dependencies:
       '@types/mime-types': 2.1.4
       chalk: 5.6.2
       get-east-asian-width: 1.5.0
-      koffi: 2.16.0
       marked: 15.0.12
       mime-types: 3.0.2
+    optionalDependencies:
+      koffi: 2.16.0
 
-  '@mistralai/mistralai@1.10.0':
+  '@mistralai/mistralai@2.2.0':
     dependencies:
+      ws: 8.20.0
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -2478,6 +2499,8 @@ snapshots:
 
   ansi-regex@5.0.1: {}
 
+  ansi-regex@6.2.2: {}
+
   ansi-styles@4.3.0:
     dependencies:
       color-convert: 2.0.1
@@ -2816,7 +2839,8 @@ snapshots:
       jwa: 2.0.1
       safe-buffer: 5.2.1
 
-  koffi@2.16.0: {}
+  koffi@2.16.0:
+    optional: true
 
   linkify-it@5.0.0:
     dependencies:
@@ -2890,7 +2914,7 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.10.0(ws@8.20.0)(zod@3.25.76):
+  openai@6.26.0(ws@8.20.0)(zod@3.25.76):
     optionalDependencies:
       ws: 8.20.0
       zod: 3.25.76
@@ -3045,6 +3069,10 @@ snapshots:
     dependencies:
       ansi-regex: 5.0.1
 
+  strip-ansi@7.2.0:
+    dependencies:
+      ansi-regex: 6.2.2
+
   strnum@2.2.3: {}
 
   strtok3@10.3.5:
@@ -3091,6 +3119,8 @@ snapshots:
   undici-types@7.16.0: {}
 
   undici@7.25.0: {}
+
+  uuid@11.1.0: {}
 
   web-streams-polyfill@3.3.3: {}
 
