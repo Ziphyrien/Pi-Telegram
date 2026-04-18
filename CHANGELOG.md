@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed long-running pi RPC prompts timing out after 60 seconds in Telegram bridging by waiting for `agent_end` without the `RpcClient.collectEvents()` timeout path.
+- Fixed Telegram error replies to send a fresh message instead of overwriting the temporary “思考中...” status, and increased the reported error length limit so diagnostics are less likely to be truncated.
+
 ## [0.3.3] - 2026-04-18
 
 ### Changed

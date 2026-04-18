@@ -928,15 +928,18 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
   const reportStatusOrReply = async (
     tgCtx: BotContext,
-    status: { editText: (text: string, other?: Record<string, unknown>) => Promise<unknown> },
+    status: { delete?: () => Promise<unknown>; editText: (text: string, other?: Record<string, unknown>) => Promise<unknown> },
     text: string,
   ): Promise<void> => {
-    const safe = truncate(text, 1500);
-    try {
-      await status.editText(safe);
-    } catch {
-      await tgCtx.reply(safe).catch(() => {});
-    }
+    const safe = truncate(text, 3500);
+    await status.delete?.().catch(() => {});
+    await tgCtx.reply(safe).catch(async () => {
+      try {
+        await status.editText(safe);
+      } catch {
+        // ignore final fallback failure
+      }
+    });
   };
 
   const executeCronDirectiveForChat = async (

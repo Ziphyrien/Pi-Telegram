@@ -207,10 +207,14 @@ export class PiRpc extends EventEmitter {
     let endMessages: unknown[] = [];
 
     let detachExit = () => {};
+    let resolveAgentEnd = () => {};
     const exitPromise = new Promise<never>((_, reject) => {
       const onExit = (code: number | null) => reject(this.withStderrContext(`pi exited with code ${code}`));
       this.once("exit", onExit);
       detachExit = () => this.removeListener("exit", onExit);
+    });
+    const agentEndPromise = new Promise<void>((resolve) => {
+      resolveAgentEnd = resolve;
     });
 
     const detachEvent = client.onEvent((event: RpcClientEvent) => {
@@ -248,15 +252,14 @@ export class PiRpc extends EventEmitter {
 
       if (event.type === "agent_end") {
         endMessages = (event as any).messages ?? [];
+        resolveAgentEnd();
       }
     });
 
     this.streaming = true;
     try {
-      await Promise.race([
-        client.promptAndWait(message, images as any),
-        exitPromise,
-      ]);
+      await client.prompt(message, images as any);
+      await Promise.race([agentEndPromise, exitPromise]);
     } catch (err) {
       throw this.withStderrContext(this.toError(err).message);
     } finally {
