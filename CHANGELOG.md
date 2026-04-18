@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-18
+
 ### Changed
 
 - Reduced CPU time in Telegram streaming draft preview rendering by caching repeated preview work, reusing the prejoined tool prefix, and avoiding unnecessary HTML/plain-text formatting on the hot path.
