@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Migrated the embedded pi RPC integration from `@mariozechner/pi-coding-agent` to `@earendil-works/pi-coding-agent` `^0.74.0` while preserving the existing subprocess RPC bridge.
+
 ## [0.3.4] - 2026-04-18
 
 ### Fixed

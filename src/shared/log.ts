@@ -2,7 +2,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const piEntryJs = fileURLToPath(import.meta.resolve("@mariozechner/pi-coding-agent"));
+const piEntryJs = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piRoot = resolve(dirname(piEntryJs), "..");
 const themeJs = resolve(piRoot, "dist", "modes", "interactive", "theme", "theme.js");
 

@@ -18,7 +18,7 @@ Pi-Telegram 是一个桥接程序。
 ## 运行前准备
 
 1. 安装 Node.js
-2. 根据[教程](https://linux.do/t/topic/1680124)安装配置[pi coding agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)，并确认终端可以直接执行 `pi`并与其正常对话
+2. 根据[教程](https://linux.do/t/topic/1680124)安装配置[pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)，并确认终端可以直接执行 `pi`并与其正常对话
 3. 在 BotFather 创建 Telegram bot，拿到 token
 
 ## 安装

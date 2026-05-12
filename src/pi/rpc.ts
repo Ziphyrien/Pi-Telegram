@@ -4,10 +4,10 @@ import { EventEmitter } from "node:events";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RpcClient } from "@mariozechner/pi-coding-agent";
+import { RpcClient } from "@earendil-works/pi-coding-agent";
 import type { PiImage, PiModelInfo, PiSessionStats } from "./types.js";
 
-const piEntryJs = fileURLToPath(import.meta.resolve("@mariozechner/pi-coding-agent"));
+const piEntryJs = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piCliPath = resolve(dirname(piEntryJs), "cli.js");
 
 type PromptResult = { text: string; tools: string[] };
