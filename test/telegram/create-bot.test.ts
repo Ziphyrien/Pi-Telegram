@@ -4,9 +4,11 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
+  buildRichMessage,
+  buildRichThinkingMessage,
   buildStreamingPreview,
   buildUserMessageWithReplyContext,
-  callSendMessageDraft,
+  callSendRichMessageDraft,
   createDraftPreviewModel,
   createDraftStreamUpdater,
   dedupeLoadedImageGroups,
@@ -54,13 +56,15 @@ describe("create-bot pure helpers", () => {
     const calls: Array<{ method: string; args: unknown[] }> = [];
     const ctx = {
       me: { id: 10 },
-      chat: { id: 20 },
+      chat: { id: 20, type: "group" },
       calls,
-      failHtml: false,
       reply: async (text: unknown, options?: unknown) => {
         calls.push({ method: "reply", args: [text, options] });
-        const parseMode = (options as { parse_mode?: string } | undefined)?.parse_mode;
-        if (ctx.failHtml && parseMode === "HTML") throw new Error("html rejected");
+        nextMessageId += 1;
+        return { message_id: nextMessageId };
+      },
+      replyWithRichMessage: async (...args: unknown[]) => {
+        calls.push({ method: "rich", args });
         nextMessageId += 1;
         return { message_id: nextMessageId };
       },
@@ -114,7 +118,7 @@ describe("create-bot pure helpers", () => {
     assert.equal(buildStreamingPreview("abcdefghijklmnopqrstuvwxyz0123456789", [], 8), "…efghijklmnopqrstuvwxyz0123456789");
   });
 
-  test("draft preview model renders HTML/plain previews and memoizes unchanged renders", () => {
+  test("draft preview model renders Rich Markdown and memoizes unchanged previews", () => {
     const preview = createDraftPreviewModel(1000);
     assert.equal(preview.render(), null);
 
@@ -122,30 +126,29 @@ describe("create-bot pure helpers", () => {
     preview.onToolStart("read");
     preview.onToolError();
 
-    const html = preview.render(true);
-    assert.equal(html?.parseMode, "HTML");
-    assert.match(html?.draftText ?? "", /<b>bold<\/b>/);
-    assert.equal(preview.render(true), html);
+    const first = preview.render();
+    assert.deepEqual(first?.richMessage, { markdown: "🔧 read ❌\n\n**bold**" });
+    assert.equal(preview.render(), first);
 
-    const plain = preview.render(false);
-    assert.equal(plain?.parseMode, undefined);
-    assert.match(plain?.draftText ?? "", /bold/);
+    preview.onTextDelta("", "second");
+    const second = preview.render();
+    assert.notEqual(second, first);
+    assert.deepEqual(second?.richMessage, { markdown: "🔧 read ❌\n\nsecond" });
   });
 
   test("draft preview model renders unnamed tool failures", () => {
     const preview = createDraftPreviewModel(1000);
 
     preview.onToolError();
-    const first = preview.render(false);
+    const first = preview.render();
 
-    assert.equal(first?.draftText, "🔧 执行失败 ❌");
-    assert.equal(first?.getPlainText(), "🔧 执行失败 ❌");
+    assert.deepEqual(first?.richMessage, { markdown: "🔧 执行失败 ❌" });
 
     preview.onToolStart("write-file");
     preview.onToolError();
-    const second = preview.render(false);
+    const second = preview.render();
 
-    assert.match(second?.draftText ?? "", /🔧 执行失败 ❌\n🔧 write-file ❌/);
+    assert.equal(second?.richMessage.markdown, "🔧 执行失败 ❌\n🔧 write-file ❌");
   });
 
   test("draft preview model strips protocol tags and ignores empty previews", () => {
@@ -155,133 +158,105 @@ describe("create-bot pure helpers", () => {
     assert.equal(preview.render(), null);
 
     preview.onTextDelta("", '<tg-reply contains="secret" /> visible <tg-cron action="list" />');
-    const rendered = preview.render(false);
+    const rendered = preview.render();
 
-    assert.match(rendered?.draftText ?? "", /visible/);
-    assert.doesNotMatch(rendered?.draftText ?? "", /tg-(reply|cron)|secret/);
+    assert.match(rendered?.richMessage.markdown ?? "", /visible/);
+    assert.doesNotMatch(rendered?.richMessage.markdown ?? "", /tg-(reply|cron)|secret/);
   });
 
   test("draft preview model keeps long drafts inside Bot API limits", () => {
     const preview = createDraftPreviewModel(10_000);
     preview.onTextDelta("", `${"a".repeat(5_000)}THE_END`);
 
-    const rendered = preview.render(false);
+    const rendered = preview.render();
 
     assert.ok(rendered);
-    assert.ok(rendered.draftText.length <= 4096);
-    assert.match(rendered.draftText, /^…/);
-    assert.match(rendered.draftText, /THE_END$/);
-    assert.equal(rendered.getPlainText(), rendered.draftText);
+    assert.ok(rendered.richMessage.markdown);
+    assert.ok(rendered.richMessage.markdown.length <= 4096);
+    assert.match(rendered.richMessage.markdown, /^…/);
+    assert.match(rendered.richMessage.markdown, /THE_END$/);
   });
 
   test("draft preview model invalidates cached renders after text changes", () => {
     const preview = createDraftPreviewModel(1000);
 
     preview.onTextDelta("", "first");
-    const first = preview.render(false);
-    assert.equal(preview.render(false), first);
+    const first = preview.render();
+    assert.equal(preview.render(), first);
 
     preview.onTextDelta("", "second");
-    const second = preview.render(false);
+    const second = preview.render();
 
     assert.notEqual(second, first);
-    assert.equal(second?.draftText, "second");
+    assert.equal(second?.richMessage.markdown, "second");
   });
 
-  test("sends message drafts through grammY extension method", async () => {
+  test("sends rich drafts through grammY's typed API", async () => {
     const calls: unknown[][] = [];
     const api = {
-      sendMessageDraft: async (...args: unknown[]) => {
+      sendRichMessageDraft: async (...args: unknown[]) => {
         calls.push(args);
       },
     };
 
-    await callSendMessageDraft(api as never, 123, 4, "draft", 99, "HTML");
+    await callSendRichMessageDraft(api as never, 123, 4, buildRichMessage("**draft**"), 99);
 
-    assert.deepEqual(calls, [[123, 4, "draft", { message_thread_id: 99, parse_mode: "HTML" }]]);
+    assert.deepEqual(calls, [[123, 4, { markdown: "**draft**" }, { message_thread_id: 99 }]]);
   });
 
-  test("sends message drafts through raw Bot API fallback", async () => {
-    const calls: unknown[] = [];
-    const api = {
-      raw: {
-        sendMessageDraft: async (payload: unknown) => {
-          calls.push(payload);
-        },
-      },
-    };
+  test("preserves CJK and Rich Markdown syntax for Telegram", () => {
+    const markdown = "# 中文标题\n\n这是 **粗体** 和 `代码`。\n\n| 项目 | 结果 |\n| --- | --- |\n| 中文 | ✅ |\n\n<details open><summary>展开</summary>内容</details>";
 
-    await callSendMessageDraft(api as never, 123, 5, "plain");
-
-    assert.deepEqual(calls, [{ chat_id: 123, draft_id: 5, text: "plain" }]);
+    assert.deepEqual(buildRichMessage(markdown), { markdown });
   });
 
-  test("omits invalid message thread ids for draft sends", async () => {
+  test("builds the native Rich Thinking block", () => {
+    assert.deepEqual(buildRichThinkingMessage(), {
+      blocks: [{ type: "thinking", text: "Thinking..." }],
+    });
+  });
+
+  test("omits invalid message thread ids for rich drafts", async () => {
     const calls: unknown[][] = [];
     const api = {
-      sendMessageDraft: async (...args: unknown[]) => {
+      sendRichMessageDraft: async (...args: unknown[]) => {
         calls.push(args);
       },
     };
 
-    await callSendMessageDraft(api as never, 123, 6, "draft", 0);
+    await callSendRichMessageDraft(api as never, 123, 6, buildRichMessage("draft"), 0);
 
-    assert.deepEqual(calls, [[123, 6, "draft", undefined]]);
+    assert.deepEqual(calls, [[123, 6, { markdown: "draft" }, undefined]]);
   });
 
-  test("reports unsupported draft APIs clearly", async () => {
-    await assert.rejects(
-      callSendMessageDraft({} as never, 123, 7, "draft"),
-      /sendMessageDraft not supported/,
-    );
-  });
-
-  test("draft stream updater sends rendered previews", async () => {
+  test("draft stream updater sends Thinking and Rich Markdown previews", async () => {
     const calls: unknown[][] = [];
     const api = {
-      sendMessageDraft: async (...args: unknown[]) => {
+      sendRichMessageDraft: async (...args: unknown[]) => {
         calls.push(args);
       },
     };
     const stream = createDraftStreamUpdater(api as never, 1, 2, 3, 1000, undefined, 0);
 
-    stream.onTextDelta("hello", "**hello**");
+    stream.onStart();
+    await flushDraftStream();
+    stream.onTextDelta("", "**answer**");
     await flushDraftStream();
     await stream.stopAndWait();
 
-    assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0], [1, 2, "<b>hello</b>", { message_thread_id: 3, parse_mode: "HTML" }]);
+    assert.deepEqual(calls, [
+      [1, 2, { blocks: [{ type: "thinking", text: "Thinking..." }] }, { message_thread_id: 3 }],
+      [1, 2, { markdown: "**answer**" }, { message_thread_id: 3 }],
+    ]);
   });
 
-  test("draft stream updater falls back to plain text after HTML parse errors", async () => {
-    const calls: unknown[][] = [];
-    const api = {
-      sendMessageDraft: async (...args: unknown[]) => {
-        calls.push(args);
-        const options = args[3] as { parse_mode?: string } | undefined;
-        if (options?.parse_mode === "HTML") throw new Error("Bad Request: can't parse entities");
-      },
-    };
-    const fallbacks: unknown[] = [];
-    const stream = createDraftStreamUpdater(api as never, 1, 2, undefined, 1000, (err) => fallbacks.push(err), 0);
-
-    stream.onTextDelta("", "**broken**");
-    await flushDraftStream();
-    await stream.stopAndWait();
-
-    assert.equal(fallbacks.length, 0);
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[0], [1, 2, "<b>broken</b>", { parse_mode: "HTML" }]);
-    assert.deepEqual(calls[1], [1, 2, "broken", undefined]);
-  });
-
-  test("draft stream updater disables itself when drafts are unsupported", async () => {
+  test("draft stream updater disables itself after a Rich draft error", async () => {
     const errors: unknown[] = [];
     const calls: string[] = [];
     const api = {
-      sendMessageDraft: async (_chatId: unknown, _draftId: unknown, text: unknown) => {
-        calls.push(String(text));
-        throw new Error("method not found");
+      sendRichMessageDraft: async (_chatId: unknown, _draftId: unknown, richMessage: unknown) => {
+        calls.push((richMessage as { markdown?: string }).markdown ?? "");
+        throw new Error("draft request failed");
       },
     };
     const stream = createDraftStreamUpdater(api as never, 1, 2, undefined, 1000, (err) => errors.push(err), 0);
@@ -294,16 +269,18 @@ describe("create-bot pure helpers", () => {
 
     assert.deepEqual(calls, ["first"]);
     assert.equal(errors.length, 1);
+    assert.match(String(errors[0]), /draft request failed/);
   });
 
-  test("draft stream updater ignores not-modified and empty-text errors", async () => {
+  test("draft stream updater ignores not-modified errors and stops after send errors", async () => {
     const errors: unknown[] = [];
     const calls: string[] = [];
     const api = {
-      sendMessageDraft: async (_chatId: unknown, _draftId: unknown, text: unknown) => {
-        calls.push(String(text));
-        if (String(text).includes("same")) throw new Error("message is not modified");
-        throw new Error("text must be non-empty");
+      sendRichMessageDraft: async (_chatId: unknown, _draftId: unknown, richMessage: unknown) => {
+        const markdown = (richMessage as { markdown?: string }).markdown ?? "";
+        calls.push(markdown);
+        if (markdown.includes("same")) throw new Error("message is not modified");
+        throw new Error("draft request failed");
       },
     };
 
@@ -312,13 +289,14 @@ describe("create-bot pure helpers", () => {
     await flushDraftStream();
     await unchanged.stopAndWait();
 
-    const empty = createDraftStreamUpdater(api as never, 1, 2, undefined, 1000, (err) => errors.push(err), 0);
-    empty.onToolError();
+    const failed = createDraftStreamUpdater(api as never, 1, 2, undefined, 1000, (err) => errors.push(err), 0);
+    failed.onToolError();
     await flushDraftStream();
-    await empty.stopAndWait();
+    await failed.stopAndWait();
 
     assert.deepEqual(calls, ["same", "🔧 执行失败 ❌"]);
-    assert.deepEqual(errors, []);
+    assert.equal(errors.length, 1);
+    assert.match(String(errors[0]), /draft request failed/);
   });
 
   test("splits long messages near newline boundaries and truncates strings", () => {
@@ -694,15 +672,23 @@ describe("create-bot pure helpers", () => {
     assert.deepEqual(calls, [`photo`, `document:${JSON.stringify({ reply_parameters: replyParameters })}`]);
   });
 
-  test("sendPreparedReply falls back to plain text when HTML send fails", async () => {
+  test("sendPreparedReply sends Rich Markdown and keeps attachments separate", async () => {
     const ctx = createReplyContext();
-    ctx.failHtml = true;
+    const replyParameters = { message_id: 42, allow_sending_without_reply: true };
+    const attachment: TgAttachment = { kind: "document", media: "FILE_ID", label: "doc.txt" };
+    const body = "# title\n\n| a | b |\n|---|---|\n| 1 | 2 |";
 
-    await sendPreparedReply(ctx as never, { body: "**bold** <tg-cron action=\"list\" />", attachments: [], warnings: [] }, 1000);
+    await sendPreparedReply(ctx as never, {
+      body,
+      attachments: [attachment],
+      warnings: [],
+      replyParameters,
+    }, 1000);
 
-    assert.equal(ctx.calls.length, 2);
-    assert.deepEqual(ctx.calls[0], { method: "reply", args: ["<b>bold</b>", { parse_mode: "HTML" }] });
-    assert.deepEqual(ctx.calls[1], { method: "reply", args: ["bold", undefined] });
+    assert.deepEqual(ctx.calls, [
+      { method: "rich", args: [{ markdown: body }, { reply_parameters: replyParameters }] },
+      { method: "document", args: ["FILE_ID", undefined] },
+    ]);
   });
 
   test("sendPreparedReply splits long body and only replies to the first part", async () => {
@@ -712,8 +698,8 @@ describe("create-bot pure helpers", () => {
     await sendPreparedReply(ctx as never, { body: "abcdef", attachments: [], warnings: [], replyParameters }, 3);
 
     assert.deepEqual(ctx.calls.map((call) => call.args), [
-      ["abc", { parse_mode: "HTML", reply_parameters: replyParameters }],
-      ["def", { parse_mode: "HTML" }],
+      [{ markdown: "abc" }, { reply_parameters: replyParameters }],
+      [{ markdown: "def" }, undefined],
     ]);
   });
 

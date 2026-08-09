@@ -6,6 +6,8 @@
 
 - The Telegram thinking-level menu now shows the options supported by the current model, including newer levels such as `max` when available.
 - Switching models refreshes the available thinking levels automatically, while older setups keep a compatible fallback menu.
+- AI-generated replies now use Telegram Rich Messages across private chats, groups, and channels, preserving Rich Markdown structures such as tables, collapsible details, and formulas.
+- Private streaming drafts now use Rich Message drafts, showing Telegram's native “Thinking…” block before the first visible response text arrives.
 
 ### Changed
 

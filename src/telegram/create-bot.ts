@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Bot, GrammyError, HttpError, type Context } from "grammy";
 import type { ReplyParameters } from "@grammyjs/types";
+import type { InputRichMessageWithoutUpload } from "grammy/types";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { hydrate, type HydrateFlavor } from "@grammyjs/hydrate";
 import { hydrateFiles } from "@grammyjs/files";
@@ -13,7 +14,6 @@ import { CommandGroup } from "@grammyjs/commands";
 import { Menu } from "@grammyjs/menu";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import { log } from "../shared/log.js";
-import { mdToPlainText, mdToTgHtml } from "./format.js";
 import { createBotMenus } from "./menu.js";
 import { buildStatusLines } from "./status.js";
 
@@ -38,6 +38,7 @@ import type { BotConfig } from "../shared/types.js";
 import type { PiImage, PiSessionStats } from "../pi/types.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
+type SendRichMessageDraftOther = NonNullable<Parameters<BotContext["api"]["sendRichMessageDraft"]>[3]>;
 
 export interface CreateBotOptions {
   botIndex: number;
@@ -436,16 +437,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     if (prepared.body.trim()) {
       for (const part of splitMessage(prepared.body, maxResponseLength)) {
-        const html = mdToTgHtml(part);
-        try {
-          const sent = await bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
-          rememberReplyMessage(scope, "self", sent.message_id, part);
-        } catch (err) {
-          log.warn(`chat${chatId} 定时任务 HTML 发送失败，降级纯文本：${describeTelegramSendError(err)}`);
-          const plain = mdToPlainText(stripProtocolTags(part));
-          const sent = await bot.api.sendMessage(chatId, plain);
-          rememberReplyMessage(scope, "self", sent.message_id, plain);
-        }
+        const sent = await bot.api.sendRichMessage(chatId, buildRichMessage(part));
+        rememberReplyMessage(scope, "self", sent.message_id, part);
       }
     }
 
@@ -1287,14 +1280,19 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             getMessageThreadId(tgCtx),
             maxResponseLength,
             (err) => {
-              log.warn(`chat${chatId} sendMessageDraft 预览失败，已降级跳过：${describeTelegramSendError(err)}`);
+              log.warn(`chat${chatId} sendRichMessageDraft 预览失败，已停用本次流式预览：${describeTelegramSendError(err)}`);
             },
           )
           : createSilentStreamUpdater();
 
+        const promptOnStart = () => {
+          onStart();
+          stream.onStart();
+        };
+
         try {
           const result = await inst.prompt(promptMessage, images, {
-            onStart,
+            onStart: promptOnStart,
             onTextDelta: (delta, fullText) => {
               streamedText = stripProtocolTags(fullText);
               stream.onTextDelta(delta, fullText);
@@ -1822,28 +1820,6 @@ function isMessageNotModifiedError(err: unknown): boolean {
   return text.includes("message is not modified");
 }
 
-function isTextMustBeNonEmptyError(err: unknown): boolean {
-  const text = describeTelegramSendError(err).toLowerCase();
-  return text.includes("text must be non-empty");
-}
-
-function isDraftHtmlParseError(err: unknown): boolean {
-  const text = describeTelegramSendError(err).toLowerCase();
-  return text.includes("can't parse entities")
-    || text.includes("cant parse entities")
-    || text.includes("unsupported start tag")
-    || text.includes("unexpected end tag")
-    || text.includes("can't find end tag");
-}
-
-function isSendMessageDraftUnsupportedError(err: unknown): boolean {
-  const text = describeTelegramSendError(err).toLowerCase();
-  if (text.includes("sendmessagedraft")) return true;
-  if (text.includes("method not found")) return true;
-  if (text.includes("not implemented")) return true;
-  return false;
-}
-
 export interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
@@ -1942,6 +1918,7 @@ export function parseModelImageSupport(model: any): boolean | undefined {
 }
 
 export interface StreamUpdater {
+  onStart: () => void;
   onTextDelta: (delta: string, fullText: string) => void;
   onToolStart: (toolName?: string) => void;
   onToolError: (toolName?: string) => void;
@@ -1950,9 +1927,7 @@ export interface StreamUpdater {
 }
 
 interface DraftPreviewRenderResult {
-  draftText: string;
-  getPlainText: () => string;
-  parseMode?: "HTML";
+  richMessage: InputRichMessageWithoutUpload;
   renderKey: string;
 }
 
@@ -1960,17 +1935,16 @@ export interface DraftPreviewModel {
   onTextDelta: (delta: string, fullText: string) => void;
   onToolStart: (toolName?: string) => void;
   onToolError: () => void;
-  render: (draftSupportsHtml?: boolean) => DraftPreviewRenderResult | null;
+  render: () => DraftPreviewRenderResult | null;
 }
 
 export function createDraftPreviewModel(maxLen: number): DraftPreviewModel {
-  // Must stay within Bot API text limit (4096)
+  // Stay below Telegram's 4096-character draft limit with room for tool status.
   const safeLimit = Math.min(Math.max(200, maxLen - 600), 3800);
   let text = "";
   const tools: string[] = [];
   let toolBlock = "";
   let lastPreview = "";
-  let lastDraftSupportsHtml: boolean | undefined;
   let lastResult: DraftPreviewRenderResult | null = null;
 
   return {
@@ -1989,102 +1963,53 @@ export function createDraftPreviewModel(maxLen: number): DraftPreviewModel {
       }
       toolBlock = tools.length ? `${tools.join("\n")}\n\n` : "";
     },
-    render: (draftSupportsHtml = true) => {
+    render: () => {
       const preview = buildStreamingPreviewWithToolBlock(text, toolBlock, safeLimit);
-      if (!preview) {
+      if (!preview.trim()) {
         lastPreview = "";
-        lastDraftSupportsHtml = draftSupportsHtml;
         lastResult = null;
         return null;
       }
-      if (preview === lastPreview && draftSupportsHtml === lastDraftSupportsHtml) {
-        return lastResult;
-      }
-
-      let plainText: string | undefined;
-      const getPlainText = () => {
-        if (plainText !== undefined) return plainText;
-        plainText = mdToPlainText(preview).trim();
-        if (!plainText || plainText === "(无回复)") {
-          plainText = "";
-          return plainText;
-        }
-        if (plainText.length > 4096) {
-          plainText = `${plainText.slice(0, 4095)}…`;
-        }
-        return plainText;
-      };
-
-      if (draftSupportsHtml) {
-        const htmlDraftText = mdToTgHtml(preview).trim();
-        if (htmlDraftText && htmlDraftText !== "(无回复)") {
-          lastPreview = preview;
-          lastDraftSupportsHtml = draftSupportsHtml;
-          lastResult = {
-            draftText: htmlDraftText,
-            getPlainText,
-            parseMode: "HTML",
-            renderKey: `HTML:${htmlDraftText}`,
-          };
-          return lastResult;
-        }
-      }
-
-      const draftText = getPlainText();
-      if (!draftText) {
-        lastPreview = preview;
-        lastDraftSupportsHtml = draftSupportsHtml;
-        lastResult = null;
-        return null;
-      }
+      if (preview === lastPreview) return lastResult;
 
       lastPreview = preview;
-      lastDraftSupportsHtml = draftSupportsHtml;
       lastResult = {
-        draftText,
-        getPlainText,
-        renderKey: `plain:${draftText}`,
+        richMessage: buildRichMessage(preview),
+        renderKey: `rich:${preview}`,
       };
       return lastResult;
     },
   };
 }
 
-export async function callSendMessageDraft(
+export async function callSendRichMessageDraft(
   api: BotContext["api"],
   chatId: number,
   draftId: number,
-  text: string,
+  richMessage: InputRichMessageWithoutUpload,
   messageThreadId?: number,
-  parseMode?: "HTML",
 ): Promise<void> {
-  const other: Record<string, unknown> = {};
+  const other: SendRichMessageDraftOther = {};
   if (Number.isSafeInteger(messageThreadId) && (messageThreadId as number) > 0) {
     other.message_thread_id = messageThreadId as number;
   }
-  if (parseMode) {
-    other.parse_mode = parseMode;
-  }
-  const sendOther = Object.keys(other).length > 0 ? other : undefined;
 
-  const apiAny = api as any;
+  await api.sendRichMessageDraft(
+    chatId,
+    draftId,
+    richMessage,
+    Object.keys(other).length > 0 ? other : undefined,
+  );
+}
 
-  if (typeof apiAny.sendMessageDraft === "function") {
-    await apiAny.sendMessageDraft(chatId, draftId, text, sendOther);
-    return;
-  }
+export function buildRichMessage(text: string): InputRichMessageWithoutUpload {
+  return { markdown: text || "(无回复)" };
+}
 
-  if (typeof apiAny?.raw?.sendMessageDraft === "function") {
-    await apiAny.raw.sendMessageDraft({
-      chat_id: chatId,
-      draft_id: draftId,
-      text,
-      ...(sendOther ?? {}),
-    });
-    return;
-  }
-
-  throw new Error("sendMessageDraft not supported by current grammY version");
+export function buildRichThinkingMessage(): InputRichMessageWithoutUpload {
+  return {
+    blocks: [{ type: "thinking", text: "Thinking..." }],
+  };
 }
 
 export function createDraftStreamUpdater(
@@ -2093,7 +2018,7 @@ export function createDraftStreamUpdater(
   draftId: number,
   messageThreadId: number | undefined,
   maxLen: number,
-  onDraftFallback?: (err: unknown) => void,
+  onDraftError?: (err: unknown) => void,
   minEditIntervalMs = 700,
 ): StreamUpdater {
   const previewModel = createDraftPreviewModel(maxLen);
@@ -2102,52 +2027,55 @@ export function createDraftStreamUpdater(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let disabled = false;
-  let draftSupportsHtml = true;
   let pendingEdit: Promise<void> = Promise.resolve();
+  let thinkingShown = false;
 
-  const render = () => {
-    if (disposed || disabled) return;
-
-    const rendered = previewModel.render(draftSupportsHtml);
-    if (!rendered) return;
-
-    const { draftText, getPlainText, parseMode, renderKey } = rendered;
-    if (renderKey === lastRendered) return;
-
-    lastRendered = renderKey;
-    lastEditAt = Date.now();
-
+  const enqueue = (send: () => Promise<void>) => {
     pendingEdit = pendingEdit
       .then(async () => {
         if (disposed || disabled) return;
         try {
-          await callSendMessageDraft(api, chatId, draftId, draftText, messageThreadId, parseMode);
+          await send();
         } catch (err) {
-          let sendErr: unknown = err;
-
-          if (parseMode === "HTML" && isDraftHtmlParseError(sendErr)) {
-            draftSupportsHtml = false;
-            try {
-              const plainText = getPlainText();
-              await callSendMessageDraft(api, chatId, draftId, plainText, messageThreadId);
-              lastRendered = `plain:${plainText}`;
-              return;
-            } catch (fallbackErr) {
-              sendErr = fallbackErr;
-            }
-          }
-
-          if (isMessageNotModifiedError(sendErr)) return;
-          if (isTextMustBeNonEmptyError(sendErr)) return;
-          if (isSendMessageDraftUnsupportedError(sendErr)) {
-            disabled = true;
-          }
-          try { onDraftFallback?.(sendErr); } catch { /* ignore callback error */ }
+          if (isMessageNotModifiedError(err)) return;
+          disabled = true;
+          try { onDraftError?.(err); } catch { /* ignore callback error */ }
         }
       })
       .catch(() => {
         // keep chain alive
       });
+  };
+
+  const showThinking = () => {
+    if (disposed || disabled || thinkingShown) return;
+    thinkingShown = true;
+    lastRendered = "thinking";
+    lastEditAt = Date.now();
+    enqueue(() => callSendRichMessageDraft(
+      api,
+      chatId,
+      draftId,
+      buildRichThinkingMessage(),
+      messageThreadId,
+    ));
+  };
+
+  const render = () => {
+    if (disposed || disabled) return;
+
+    const rendered = previewModel.render();
+    if (!rendered || rendered.renderKey === lastRendered) return;
+
+    lastRendered = rendered.renderKey;
+    lastEditAt = Date.now();
+    enqueue(() => callSendRichMessageDraft(
+      api,
+      chatId,
+      draftId,
+      rendered.richMessage,
+      messageThreadId,
+    ));
   };
 
   const scheduleRender = () => {
@@ -2174,6 +2102,7 @@ export function createDraftStreamUpdater(
   };
 
   return {
+    onStart: showThinking,
     onTextDelta: (delta, fullText) => {
       previewModel.onTextDelta(delta, fullText);
       scheduleRender();
@@ -2196,8 +2125,9 @@ export function createDraftStreamUpdater(
   };
 }
 
-function createSilentStreamUpdater(): StreamUpdater {
+function createSilentStreamUpdater() {
   return {
+    onStart: () => {},
     onTextDelta: () => {},
     onToolStart: () => {},
     onToolError: () => {},
@@ -2318,20 +2248,11 @@ export async function sendPreparedReply(
   let first = true;
   if (prepared.body.trim()) {
     for (const part of splitMessage(prepared.body, maxLen)) {
-      const html = mdToTgHtml(part);
       const opts = first && prepared.replyParameters
         ? { reply_parameters: prepared.replyParameters }
         : undefined;
-      try {
-        const sent = await tgCtx.reply(html, { parse_mode: "HTML", ...(opts ?? {}) });
-        rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, part);
-      } catch (err) {
-        log.warn(`chat${tgCtx.chat?.id ?? 0} HTML 发送失败，降级纯文本：${describeTelegramSendError(err)}`);
-        const safePart = stripProtocolTags(part);
-        const plain = mdToPlainText(safePart);
-        const sent = await tgCtx.reply(plain, opts);
-        rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, plain);
-      }
+      const sent = await tgCtx.replyWithRichMessage(buildRichMessage(part), opts);
+      rememberReplyMessage(replyScopeKey(tgCtx), "self", sent.message_id, part);
       first = false;
     }
   }
