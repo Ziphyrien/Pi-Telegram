@@ -12,6 +12,7 @@
 ### Changed
 
 - Pi-Telegram now requires Node.js 22.19.0 or newer.
+- Upgraded Croner to 10.0.1. Cron expressions now follow OCPS 1.4 semantics: `?` is a wildcard alias for `*`; year fields, `W`, `+`, and `@midnight` are also supported.
 
 ### Fixed
 
