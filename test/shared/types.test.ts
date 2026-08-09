@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import type { AppConfig, BotConfig, CronConfig } from "../../src/shared/types.js";
 import type {

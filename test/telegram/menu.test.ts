@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createBotMenus } from "../../src/telegram/menu.js";
 import type { PiPool } from "../../src/pi/pool.js";

@@ -6,13 +6,28 @@ const piEntryJs = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-a
 const piRoot = resolve(dirname(piEntryJs), "..");
 const themeJs = resolve(piRoot, "dist", "modes", "interactive", "theme", "theme.js");
 
-const mod = await import(pathToFileURL(themeJs).href);
-mod.initTheme("dark");
-
-const t = mod.theme as {
+type ThemeApi = {
   fg: (color: string, text: string) => string;
   bold: (text: string) => string;
 };
+
+const plainTheme: ThemeApi = {
+  fg: (_color, text) => text,
+  bold: (text) => text,
+};
+
+let t: ThemeApi = plainTheme;
+
+// Keep logger exports synchronous. Bun can evaluate dependants while a
+// top-level dynamic import is suspended, which would expose TDZ bindings.
+void import(pathToFileURL(themeJs).href)
+  .then((mod: { initTheme: (name: string) => void; theme: ThemeApi }) => {
+    mod.initTheme("dark");
+    t = mod.theme;
+  })
+  .catch(() => {
+    // Plain text logging remains available if pi's optional theme cannot load.
+  });
 
 const fg = (c: string, s: string) => t.fg(c, s);
 const bold = (s: string) => t.bold(s);

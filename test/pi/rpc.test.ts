@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,8 +20,10 @@ class FakeProcess extends EventEmitter {
   }
 }
 
+type TestProcess = FakeProcess & NonNullable<PiRpcClient["process"]>;
+
 class FakeClient implements PiRpcClient {
-  readonly process = new FakeProcess() as never;
+  readonly process = new FakeProcess() as unknown as TestProcess;
   handlers = new Set<(event: RpcClientEvent) => void>();
   startCalls = 0;
   stopCalls = 0;

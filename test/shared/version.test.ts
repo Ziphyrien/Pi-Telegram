@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -116,7 +116,7 @@ describe("version helpers", () => {
     globalThis.fetch = (async (url: string | URL | Request) => {
       calls.push(String(url));
       return new Response(JSON.stringify({ version: "2.0.0" }), { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     try {
       assert.equal(await checkLatestVersion("pkg name", "1.0.0"), "2.0.0");
@@ -133,7 +133,7 @@ describe("version helpers", () => {
       new Response("not found", { status: 404 }),
       new Response(JSON.stringify({ version: "" }), { status: 200 }),
     ];
-    globalThis.fetch = (async () => responses.shift() ?? Promise.reject(new Error("network"))) as typeof fetch;
+    globalThis.fetch = (async () => responses.shift() ?? Promise.reject(new Error("network"))) as unknown as typeof fetch;
 
     try {
       assert.equal(await checkLatestVersion("pkg", "1.0.0"), undefined);
@@ -225,7 +225,7 @@ describe("version helpers", () => {
 
   test("returns undefined for invalid latest-version JSON", async () => {
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response("{not-json", { status: 200 })) as typeof fetch;
+    globalThis.fetch = (async () => new Response("{not-json", { status: 200 })) as unknown as typeof fetch;
 
     try {
       assert.equal(await checkLatestVersion("pkg", "1.0.0"), undefined);

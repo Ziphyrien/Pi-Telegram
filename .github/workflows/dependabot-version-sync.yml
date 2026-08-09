@@ -1,0 +1,96 @@
+name: Dependabot Version Sync
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: dependabot-version-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+
+      - name: Check out Dependabot branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: dependency-pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: trusted/package.json
+
+      - name: Synchronize linked versions
+        id: synchronize
+        run: |
+          node trusted/.github/scripts/sync-dependency-versions.mjs \
+            --config trusted/.github/dependency-version-sync.json \
+            --base-root trusted \
+            --head-root dependency-pr
+
+          if git -C dependency-pr diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Regenerate lockfile without lifecycle scripts
+        if: steps.synchronize.outputs.changed == 'true'
+        working-directory: dependency-pr
+        run: bun install --lockfile-only --ignore-scripts
+
+      - name: Commit synchronized versions and queue validation
+        if: steps.synchronize.outputs.changed == 'true'
+        working-directory: dependency-pr
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh auth setup-git
+          remote_sha="$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)"
+          if [[ "$remote_sha" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "Dependabot updated the branch while versions were being synchronized."
+            exit 1
+          fi
+
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --update
+          git commit -m "chore(deps): 同步版本覆盖与锁文件"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
+
+          new_head_sha="$(git rev-parse HEAD)"
+
+          gh workflow run ci.yml --repo "$REPOSITORY" --ref "$HEAD_REF"
+          gh workflow run dependency-auto-merge.yml \
+            --repo "$REPOSITORY" \
+            --ref main \
+            -f pr_number="$PR_NUMBER" \
+            -f head_sha="$new_head_sha"

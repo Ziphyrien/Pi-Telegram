@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { formatLogLine, highlightLogMessage, log, type LogTheme } from "../../src/shared/log.js";
 

@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -433,7 +433,7 @@ describe("create-bot pure helpers", () => {
         ok: true,
         arrayBuffer: async () => fetchedBytes.buffer.slice(fetchedBytes.byteOffset, fetchedBytes.byteOffset + fetchedBytes.byteLength),
       } as Response;
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     try {
       const loaded = await downloadImageByFileId(createFileContext({
@@ -524,7 +524,7 @@ describe("create-bot pure helpers", () => {
   test("returns null when fallback Telegram file fetch fails", async () => {
     const inboundBaseDir = mkdtempSync(join(tmpdir(), "pitg-inbound-fetch-fail-"));
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = (async () => ({ ok: false } as Response)) as typeof fetch;
+    globalThis.fetch = (async () => ({ ok: false } as Response)) as unknown as typeof fetch;
 
     try {
       const loaded = await downloadInboundFileByFileId(createFileContext({

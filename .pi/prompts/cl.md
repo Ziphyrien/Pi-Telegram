@@ -43,7 +43,7 @@ Audit changelog entries for all commits since the last release.
    - List commits with missing entries
    - List entries that need duplication across affected areas
    - Add any missing entries directly
-   - Show the chosen release version and tell user to run `node scripts/release.mjs` (the script reads version from changelog and syncs `package.json`).
+   - Show the chosen release version and tell user to run `bun run release` (the script reads version from changelog and syncs `package.json`).
 
 ## Changelog Format Reference
 

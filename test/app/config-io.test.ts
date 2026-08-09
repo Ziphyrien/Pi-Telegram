@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,7 +61,7 @@ describe("app config file I/O", () => {
 
     await assert.rejects(
       () => writer(),
-      (err: unknown) => ["EISDIR", "EPERM", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? ""),
+      (err: unknown) => ["EISDIR", "EEXIST", "EPERM", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? ""),
     );
 
     rmSync(paths.settingsPath, { force: true, recursive: true });

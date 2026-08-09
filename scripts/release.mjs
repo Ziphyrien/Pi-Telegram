@@ -1,12 +1,12 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * Release script for pi-telegram
  *
  * Preferred usage:
- *   node scripts/release.mjs
+ *   bun run release
  *
  * Optional:
- *   node scripts/release.mjs --version <x.y.z>
+ *   bun run release --version <x.y.z>
  *
  * Default behavior resolves target version from CHANGELOG.md:
  * - Read the first release heading like: ## [x.y.z] - YYYY-MM-DD
@@ -14,7 +14,7 @@
  */
 
 import { execSync } from "child_process";
-import { readFileSync, existsSync, rmSync } from "fs";
+import { readFileSync, existsSync, rmSync, writeFileSync } from "fs";
 
 const args = process.argv.slice(2);
 
@@ -24,7 +24,7 @@ if (args.length === 0) {
 } else if (args.length === 2 && args[0] === "--version") {
   explicitVersion = String(args[1] || "").trim();
 } else {
-  console.error("Usage: node scripts/release.mjs [--version <x.y.z>]");
+  console.error("Usage: bun run release [--version <x.y.z>]");
   process.exit(1);
 }
 
@@ -48,6 +48,13 @@ function isSemver(v) {
 function getPackageVersion() {
   const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
   return String(pkg.version || "0.0.0").trim();
+}
+
+function setPackageVersion(version) {
+  const packagePath = "package.json";
+  const pkg = JSON.parse(readFileSync(packagePath, "utf-8"));
+  pkg.version = version;
+  writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`, "utf-8");
 }
 
 function getChangelogPath() {
@@ -120,56 +127,15 @@ function shellQuote(s) {
   return `"${String(s).replace(/"/g, '\\"')}"`;
 }
 
-function hasCommand(command) {
-  try {
-    execSync(`${command} --version`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function detectPackageManager() {
-  if (existsSync("pnpm-lock.yaml") && hasCommand("pnpm")) return "pnpm";
-  if (existsSync("yarn.lock") && hasCommand("yarn")) return "yarn";
-  if ((existsSync("bun.lockb") || existsSync("bun.lock")) && hasCommand("bun")) return "bun";
-  return "npm";
-}
-
-function reinstallDependenciesFromScratch() {
-  const manager = detectPackageManager();
-  const lockFiles = [
-    "pnpm-lock.yaml",
-    "package-lock.json",
-    "yarn.lock",
-    "bun.lockb",
-    "bun.lock",
-    "npm-shrinkwrap.json",
-  ];
-
-  console.log(`Resetting dependencies from scratch (manager=${manager})...`);
+function reinstallDependencies() {
+  console.log("Reinstalling dependencies with Bun...");
 
   if (existsSync("node_modules")) {
     rmSync("node_modules", { recursive: true, force: true });
     console.log("  Removed node_modules");
   }
 
-  for (const lock of lockFiles) {
-    if (!existsSync(lock)) continue;
-    rmSync(lock, { force: true });
-    console.log(`  Removed ${lock}`);
-  }
-
-  if (manager === "pnpm") {
-    run("pnpm install");
-  } else if (manager === "yarn") {
-    run("yarn install");
-  } else if (manager === "bun") {
-    run("bun install");
-  } else {
-    run("npm install");
-  }
-
+  run("bun install");
   console.log("  Dependencies reinstalled\n");
 }
 
@@ -200,26 +166,21 @@ console.log(`Current package version: ${currentVersion}`);
 // 3. Sync package version to target
 if (currentVersion !== targetVersion) {
   console.log("Syncing package version from changelog...");
-  run(`npm version ${targetVersion} --no-git-tag-version`);
+  setPackageVersion(targetVersion);
   console.log(`  package.json -> ${targetVersion}\n`);
 } else {
   console.log("  package.json already matches target version\n");
 }
 
-// 4. Reinstall dependencies from scratch (remove lock + node_modules first)
-reinstallDependenciesFromScratch();
+// 4. Reinstall dependencies from the Bun lockfile
+reinstallDependencies();
 
 // 5. Stage + commit + tag
 console.log("Committing and tagging...");
 const files = [
   "CHANGELOG.md",
   "package.json",
-  "pnpm-lock.yaml",
-  "package-lock.json",
-  "yarn.lock",
-  "bun.lockb",
   "bun.lock",
-  "npm-shrinkwrap.json",
 ].filter((p) => existsSync(p));
 if (files.length) {
   run(`git add ${files.map(shellQuote).join(" ")}`);
@@ -232,13 +193,13 @@ if (stagedQuietExit === "") {
   process.exit(1);
 }
 
-run(`git commit -m "Release v${targetVersion}"`);
+run(`git commit -m "chore(release): 发布 v${targetVersion}"`);
 run(`git tag v${targetVersion}`);
 console.log();
 
 // 6. Publish
 console.log("Publishing to npm...");
-run("npm publish");
+run("bun publish");
 console.log();
 
 // 7. Push

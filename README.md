@@ -35,10 +35,12 @@ pitg
 ```bash
 git clone https://github.com/Ziphyrien/Pi-Telegram.git
 cd Pi-Telegram
-npm install
-npm run build
-npm start
+bun install --frozen-lockfile
+bun run build
+bun run dev
 ```
+
+测试：`bun run test`。
 
 ## 首次启动
 
