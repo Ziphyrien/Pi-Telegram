@@ -27,6 +27,7 @@ export interface PiRpcClient {
   onEvent(handler: (event: RpcClientEvent) => void): () => void;
   getStderr(): string;
   getAvailableModels(): Promise<PiModelInfo[]>;
+  getAvailableThinkingLevels(): Promise<string[]>;
   getState(): Promise<Record<string, unknown>>;
   getSessionStats(): Promise<PiSessionStats>;
   setModel(provider: string, modelId: string): Promise<void>;
@@ -118,6 +119,22 @@ export class PiRpc extends EventEmitter {
       })
       .filter(Boolean);
     return parts.length ? parts.join("\n").trim() : undefined;
+  }
+
+  private extractAssistantText(message: unknown): string | undefined {
+    if (!message || typeof message !== "object") return undefined;
+    const record = message as Record<string, unknown>;
+    if (record.role !== "assistant") return undefined;
+
+    const content = record.content;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return undefined;
+
+    return content.map((block) => {
+      if (!block || typeof block !== "object") return "";
+      const item = block as Record<string, unknown>;
+      return typeof item.text === "string" ? item.text : "";
+    }).join("");
   }
 
   private extractAgentEndError(msgs: unknown[], last: any, streamHint = ""): string | undefined {
@@ -232,23 +249,52 @@ export class PiRpc extends EventEmitter {
     const tools: string[] = [];
     let streamErrorHint = "";
     let endMessages: unknown[] = [];
+    let assistantTextOffset: number | null = null;
+    let resetForRetry = false;
 
     let detachExit = () => {};
-    let resolveAgentEnd = () => {};
+    let resolveSettled!: () => void;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolveSettled();
+    };
     const exitPromise = new Promise<never>((_, reject) => {
       const onExit = (code: number | null) => reject(this.withStderrContext(`pi exited with code ${code}`));
       this.once("exit", onExit);
       detachExit = () => this.removeListener("exit", onExit);
     });
-    const agentEndPromise = new Promise<void>((resolve) => {
-      resolveAgentEnd = resolve;
+    const agentSettledPromise = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
     });
 
     const detachEvent = client.onEvent((event: RpcClientEvent) => {
+      if (event.type === "agent_start") {
+        if (resetForRetry) {
+          text = "";
+          tools.length = 0;
+          streamErrorHint = "";
+          endMessages = [];
+          assistantTextOffset = null;
+          resetForRetry = false;
+          try { hooks?.onTextDelta?.("", ""); } catch { /* ignore hook error */ }
+        }
+        return;
+      }
+
+      if (event.type === "message_start") {
+        const startedMessage = (event as any).message;
+        if (startedMessage?.role === "assistant") {
+          assistantTextOffset = text.length;
+        }
+        return;
+      }
+
       if (event.type === "message_update") {
         const streamEvent = event.assistantMessageEvent as any;
         if (streamEvent?.type === "text_delta") {
-          const delta = streamEvent.delta ?? "";
+          const delta = typeof streamEvent.delta === "string" ? streamEvent.delta : "";
           text += delta;
           try { hooks?.onTextDelta?.(delta, text); } catch { /* ignore hook error */ }
         } else if (streamEvent?.type === "error") {
@@ -261,6 +307,19 @@ export class PiRpc extends EventEmitter {
             || (typeof streamEvent?.message === "string" && streamEvent.message)
             || (typeof streamEvent?.reason === "string" && streamEvent.reason)
             || streamErrorHint;
+        }
+        return;
+      }
+
+      if (event.type === "message_end") {
+        const finalText = this.extractAssistantText((event as any).message);
+        if (finalText !== undefined && assistantTextOffset !== null) {
+          const correctedText = text.slice(0, assistantTextOffset) + finalText;
+          if (correctedText !== text) {
+            text = correctedText;
+            try { hooks?.onTextDelta?.("", text); } catch { /* ignore hook error */ }
+          }
+          assistantTextOffset = null;
         }
         return;
       }
@@ -278,15 +337,21 @@ export class PiRpc extends EventEmitter {
       }
 
       if (event.type === "agent_end") {
-        endMessages = (event as any).messages ?? [];
-        resolveAgentEnd();
+        const messages = (event as any).messages;
+        if (Array.isArray(messages)) endMessages = messages;
+        resetForRetry = (event as any).willRetry === true;
+        return;
+      }
+
+      if (event.type === "agent_settled") {
+        settle();
       }
     });
 
     this.streaming = true;
     try {
       await client.prompt(message, images as any);
-      await Promise.race([agentEndPromise, exitPromise]);
+      await Promise.race([agentSettledPromise, exitPromise]);
     } catch (err) {
       throw this.withStderrContext(this.toError(err).message);
     } finally {
@@ -295,15 +360,27 @@ export class PiRpc extends EventEmitter {
       detachExit();
     }
 
+    if (!text) {
+      for (let i = endMessages.length - 1; i >= 0; i -= 1) {
+        const fallbackText = this.extractAssistantText(endMessages[i]);
+        if (fallbackText !== undefined) {
+          text = fallbackText;
+          break;
+        }
+      }
+    }
+
     const last = endMessages.at(-1) as any;
-    const stopReason = String(last?.stopReason || "").toLowerCase();
+    const lastAssistant = [...endMessages].reverse().find((item) => (item as any)?.role === "assistant") as any;
+    const terminal = lastAssistant ?? last;
+    const stopReason = String(terminal?.stopReason || last?.stopReason || "").toLowerCase();
 
     if (stopReason === "aborted") {
       throw new Error("aborted");
     }
 
-    if (stopReason === "error" || stopReason === "failed" || last?.isError) {
-      const errMsg = this.extractAgentEndError(endMessages, last, streamErrorHint)
+    if (stopReason === "error" || stopReason === "failed" || terminal?.isError) {
+      const errMsg = this.extractAgentEndError(endMessages, terminal, streamErrorHint)
         || (stopReason ? `Agent ended with stopReason=${stopReason}` : "Agent ended with error");
       throw this.withStderrContext(errMsg);
     }
@@ -313,6 +390,13 @@ export class PiRpc extends EventEmitter {
 
   async getAvailableModels(): Promise<PiModelInfo[]> {
     return this.withClient((client) => client.getAvailableModels());
+  }
+
+  async getAvailableThinkingLevels(): Promise<string[]> {
+    return this.withClient(async (client) => {
+      const levels = await client.getAvailableThinkingLevels();
+      return Array.isArray(levels) ? levels.map((level) => String(level)).filter(Boolean) : [];
+    });
   }
 
   async getState(): Promise<Record<string, unknown>> {

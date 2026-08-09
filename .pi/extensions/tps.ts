@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function isAssistantMessage(message: unknown): message is AssistantMessage {
 	if (!message || typeof message !== "object") return false;
@@ -9,17 +9,24 @@ function isAssistantMessage(message: unknown): message is AssistantMessage {
 
 export default function (pi: ExtensionAPI) {
 	let agentStartMs: number | null = null;
+	let runMessages: unknown[] = [];
 
 	pi.on("agent_start", () => {
-		agentStartMs = Date.now();
+		if (agentStartMs === null) agentStartMs = Date.now();
 	});
 
-	pi.on("agent_end", (event, ctx) => {
-		if (!ctx.hasUI) return;
-		if (agentStartMs === null) return;
+	pi.on("agent_end", (event) => {
+		if (Array.isArray(event.messages)) runMessages.push(...event.messages);
+	});
 
-		const elapsedMs = Date.now() - agentStartMs;
+	pi.on("agent_settled", (_event, ctx) => {
+		const startedAt = agentStartMs;
+		const messages = runMessages;
 		agentStartMs = null;
+		runMessages = [];
+		if (!ctx.hasUI || startedAt === null) return;
+
+		const elapsedMs = Date.now() - startedAt;
 		if (elapsedMs <= 0) return;
 
 		let input = 0;
@@ -28,7 +35,7 @@ export default function (pi: ExtensionAPI) {
 		let cacheWrite = 0;
 		let totalTokens = 0;
 
-		for (const message of event.messages) {
+		for (const message of messages) {
 			if (!isAssistantMessage(message)) continue;
 			input += message.usage.input || 0;
 			output += message.usage.output || 0;
@@ -41,7 +48,7 @@ export default function (pi: ExtensionAPI) {
 
 		const elapsedSeconds = elapsedMs / 1000;
 		const tokensPerSecond = output / elapsedSeconds;
-		const message = `TPS ${tokensPerSecond.toFixed(1)} tok/s. out ${output.toLocaleString()}, in ${input.toLocaleString()}, cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}, total ${totalTokens.toLocaleString()}, ${elapsedSeconds.toFixed(1)}s`;
-		ctx.ui.notify(message, "info");
+		const notice = `TPS ${tokensPerSecond.toFixed(1)} tok/s. out ${output.toLocaleString()}, in ${input.toLocaleString()}, cache r/w ${cacheRead.toLocaleString()}/${cacheWrite.toLocaleString()}, total ${totalTokens.toLocaleString()}, ${elapsedSeconds.toFixed(1)}s`;
+		ctx.ui.notify(notice, "info");
 	});
 }

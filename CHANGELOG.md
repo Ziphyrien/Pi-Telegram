@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- The Telegram thinking-level menu now shows the options supported by the current model, including newer levels such as `max` when available.
+- Switching models refreshes the available thinking levels automatically, while older setups keep a compatible fallback menu.
+
+### Changed
+
+- Pi-Telegram now requires Node.js 22.19.0 or newer.
+
+### Fixed
+
+- Streaming replies now wait until pi has fully finished, including automatic retries and context compaction, so Telegram no longer sends a response while pi is still working.
+- Finalized assistant text now corrects the streaming preview before the reply is sent, preventing partial or stale text from appearing in the final response.
+
 ## [0.3.5] - 2026-05-12
 
 ### Changed

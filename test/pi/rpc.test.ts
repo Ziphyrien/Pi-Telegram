@@ -32,14 +32,17 @@ class FakeClient implements PiRpcClient {
   stderr = "";
   startError?: Error;
   stopError?: Error;
+  autoSettle = true;
   onPrompt: PromptHandler = async () => {
     this.emitEvent({ type: "agent_end", messages: [{ stopReason: "end" }] } as unknown as RpcClientEvent);
   };
   models = [{ id: "m1", name: "Model 1", provider: "p1", reasoning: true }];
+  thinkingLevels = ["off", "medium", "high", "max"];
   state: Record<string, unknown> = { model: { provider: "p1", id: "m1" }, thinkingLevel: "medium" };
   stats = { cost: 0.01 };
   setModelCalls: Array<[string, string]> = [];
   setThinkingLevelCalls: unknown[] = [];
+  getAvailableThinkingLevelsCalls = 0;
 
   constructor(readonly opts: PiRpcClientOptions) {}
 
@@ -66,6 +69,9 @@ class FakeClient implements PiRpcClient {
 
   emitEvent(event: RpcClientEvent): void {
     for (const handler of [...this.handlers]) handler(event);
+    if (event.type === "agent_end" && this.autoSettle) {
+      for (const handler of [...this.handlers]) handler({ type: "agent_settled" } as unknown as RpcClientEvent);
+    }
   }
 
   getStderr(): string {
@@ -74,6 +80,11 @@ class FakeClient implements PiRpcClient {
 
   async getAvailableModels() {
     return this.models;
+  }
+
+  async getAvailableThinkingLevels(): Promise<string[]> {
+    this.getAvailableThinkingLevelsCalls += 1;
+    return this.thinkingLevels;
   }
 
   async getState() {
@@ -149,7 +160,7 @@ describe("PiRpc", () => {
     assert.deepEqual(clients[0].opts.args, ["--session-dir", sessionDir, "--model", "test"]);
   });
 
-  test("streams text deltas, tool events, and resolves on agent_end", async () => {
+  test("streams text deltas, tool events, and resolves on agent_settled", async () => {
     const { rpc, clients } = createRpc({
       onClient: (client) => {
         client.onPrompt = async () => {
@@ -187,6 +198,56 @@ describe("PiRpc", () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(rpc.running, false);
     assert.equal(clients[0].promptCalls[0].message, "say hi");
+  });
+
+  test("waits for agent_settled and keeps only the retried final response", async () => {
+    let releaseSettled!: () => void;
+    const settledGate = new Promise<void>((resolve) => {
+      releaseSettled = resolve;
+    });
+    const { rpc, clients } = createRpc({
+      onClient: (client) => {
+        client.autoSettle = false;
+        client.onPrompt = async () => {
+          client.emitEvent({ type: "agent_start" } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_start", message: { role: "assistant" } } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "partial" } } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }] } } as unknown as RpcClientEvent);
+          client.emitEvent({
+            type: "agent_end",
+            messages: [{ role: "assistant", stopReason: "error", content: [{ type: "text", text: "retrying" }] }],
+            willRetry: true,
+          } as unknown as RpcClientEvent);
+
+          client.emitEvent({ type: "agent_start" } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_start", message: { role: "assistant" } } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "fin" } } as unknown as RpcClientEvent);
+          client.emitEvent({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "final" }] } } as unknown as RpcClientEvent);
+          client.emitEvent({
+            type: "agent_end",
+            messages: [{ role: "assistant", stopReason: "stop", content: [{ type: "text", text: "final" }] }],
+            willRetry: false,
+          } as unknown as RpcClientEvent);
+
+          await settledGate;
+          client.emitEvent({ type: "agent_settled" } as unknown as RpcClientEvent);
+        };
+      },
+    });
+
+    rpc.start();
+    const prompt = rpc.prompt("retry");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rpc.streaming, true);
+
+    let completed = false;
+    void prompt.then(() => { completed = true; });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(completed, false);
+
+    releaseSettled();
+    assert.deepEqual(await prompt, { text: "final", tools: [] });
+    assert.equal(clients[0].promptCalls.length, 1);
   });
 
   test("serializes prompts and can cancel queued prompts", async () => {
@@ -241,6 +302,7 @@ describe("PiRpc", () => {
 
     rpc.start();
     assert.deepEqual(await rpc.getAvailableModels(), [{ id: "m1", name: "Model 1", provider: "p1", reasoning: true }]);
+    assert.deepEqual(await rpc.getAvailableThinkingLevels(), ["off", "medium", "high", "max"]);
     assert.deepEqual(await rpc.getState(), { model: { provider: "p1", id: "m1" }, thinkingLevel: "medium" });
     assert.deepEqual(await rpc.getSessionStats(), { cost: 0.01 });
 

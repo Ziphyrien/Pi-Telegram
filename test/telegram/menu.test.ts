@@ -9,14 +9,19 @@ import type { PiModelInfo } from "../../src/pi/types.js";
 class FakePiInstance {
   getAvailableModelsCalls = 0;
   getStateCalls = 0;
+  getAvailableThinkingLevelsCalls = 0;
   setModelCalls: Array<[string, string]> = [];
   setThinkingLevelCalls: string[] = [];
   failState = false;
+  thinkingLevels?: string[];
 
   constructor(
     public models: PiModelInfo[] = [],
     public state: Record<string, unknown> = {},
-  ) {}
+    thinkingLevels?: string[],
+  ) {
+    this.thinkingLevels = thinkingLevels;
+  }
 
   async getAvailableModels(): Promise<PiModelInfo[]> {
     this.getAvailableModelsCalls += 1;
@@ -27,6 +32,12 @@ class FakePiInstance {
     this.getStateCalls += 1;
     if (this.failState) throw new Error("state unavailable");
     return this.state;
+  }
+
+  async getAvailableThinkingLevels(): Promise<string[]> {
+    this.getAvailableThinkingLevelsCalls += 1;
+    if (!this.thinkingLevels) throw new Error("thinking levels unavailable");
+    return this.thinkingLevels;
   }
 
   async rpcSetModel(provider: string, modelId: string): Promise<void> {
@@ -93,6 +104,39 @@ describe("bot menu state", () => {
     assert.equal(inst.getStateCalls, 1);
     assert.equal(await menus.ensureThinkingForChat(42), "medium");
     assert.equal(await menus.supportsThinkingForChat(42), false);
+  });
+
+  test("uses model-specific thinking levels and invalidates them after a model change", async () => {
+    const key = "botlevels_chat8";
+    const inst = new FakePiInstance(
+      [{ id: "m", name: "Model", provider: "p", reasoning: true }],
+      { model: { provider: "p", id: "m", reasoning: true }, thinkingLevel: "low" },
+      ["off", "low", "max"],
+    );
+    const pool = new FakePool({ [key]: inst });
+    const menus = createBotMenus({ botIndex: 8, botKey: "levels", pool: asPool(pool) });
+
+    assert.deepEqual(await menus.ensureThinkingLevelsForChat(8), ["off", "low", "max"]);
+    assert.equal(await menus.supportsThinkingForChat(8), true);
+    assert.equal(inst.getAvailableThinkingLevelsCalls, 1);
+
+    menus.syncState(8, { model: { provider: "p", id: "other" } });
+    assert.deepEqual(await menus.ensureThinkingLevelsForChat(8), ["off", "low", "max"]);
+    assert.equal(inst.getAvailableThinkingLevelsCalls, 2);
+  });
+
+  test("treats an off-only capability response as no thinking support", async () => {
+    const key = "botoff_chat3";
+    const inst = new FakePiInstance(
+      [{ id: "plain", name: "Plain", provider: "p", reasoning: false }],
+      { model: { provider: "p", id: "plain", reasoning: false }, thinkingLevel: "off" },
+      ["off"],
+    );
+    const pool = new FakePool({ [key]: inst });
+    const menus = createBotMenus({ botIndex: 9, botKey: "off", pool: asPool(pool) });
+
+    assert.deepEqual(await menus.ensureThinkingLevelsForChat(3), ["off"]);
+    assert.equal(await menus.supportsThinkingForChat(3), false);
   });
 
   test("uses cached thinking level populated by syncState without touching the pool", async () => {
