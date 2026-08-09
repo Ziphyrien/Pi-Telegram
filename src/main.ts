@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // src/main.ts — entry point
 import { pathToFileURL } from "node:url";
-import { runApp } from "./app/runtime.js";
+import { runApp } from "./runtime.js";
 
 export function main(run: () => Promise<void> = runApp): void {
   void run();
