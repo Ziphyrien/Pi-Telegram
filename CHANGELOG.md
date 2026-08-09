@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-09
+
 ### Added
 
 - The Telegram thinking-level menu now shows the options supported by the current model, including newer levels such as `max` when available.
