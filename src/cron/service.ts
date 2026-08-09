@@ -91,6 +91,8 @@ export class CronService {
       if (!this.started && this.stopping) return;
       this.stopping = true;
       this.clearAllSchedulesUnsafe();
+      this.runQueue.length = 0;
+      this.queuedJobIds.clear();
       this.started = false;
     });
 
@@ -237,14 +239,12 @@ export class CronService {
       const job = this.jobs.get(jobId);
       if (!job) return false;
 
-      this.enqueueRunUnsafe({
+      return this.enqueueRunUnsafe({
         jobId,
         source: "manual",
         scheduledAtMs: Date.now(),
         force: true,
       });
-
-      return true;
     });
   }
 
@@ -483,16 +483,17 @@ export class CronService {
     });
   }
 
-  private enqueueRunUnsafe(req: RunRequest): void {
+  private enqueueRunUnsafe(req: RunRequest): boolean {
     const job = this.jobs.get(req.jobId);
-    if (!job) return;
+    if (!job) return false;
 
-    if (this.queuedJobIds.has(req.jobId)) return;
-    if (job.state.runningRunId) return;
+    if (this.queuedJobIds.has(req.jobId)) return false;
+    if (job.state.runningRunId) return false;
 
     this.runQueue.push(req);
     this.queuedJobIds.add(req.jobId);
     void this.processRunQueue();
+    return true;
   }
 
   private async processRunQueue(): Promise<void> {
@@ -572,7 +573,9 @@ export class CronService {
       if (job.schedule.kind === "at") {
         await this.handleAtCompletionUnsafe(job, endedAt, result.ok);
       } else if (job.schedule.kind === "every") {
-        job.state.nextRunAtMs = computeEveryNextAt(job.schedule.anchorMs, job.schedule.everyMs, endedAt);
+        job.state.nextRunAtMs = job.enabled
+          ? computeEveryNextAt(job.schedule.anchorMs, job.schedule.everyMs, endedAt)
+          : 0;
         this.scheduleJobUnsafe(job, false);
       } else {
         const handle = this.cronHandles.get(job.id);
@@ -618,7 +621,7 @@ export class CronService {
       return { ok: false, error: "cron executor 未配置" };
     }
 
-    const timeoutMs = Math.max(5_000, this.opts.maxRunMs);
+    const timeoutMs = this.opts.executorTimeoutMs ?? Math.max(5_000, this.opts.maxRunMs);
 
     const timeoutError = `任务执行超时（>${Math.round(timeoutMs / 1000)}s）`;
 

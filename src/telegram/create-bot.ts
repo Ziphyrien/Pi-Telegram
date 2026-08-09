@@ -1490,14 +1490,14 @@ function rememberReferencedReply(tgCtx: BotContext): void {
   rememberReplyMessage(replyScopeKey(tgCtx), role, replied.message_id, text);
 }
 
-interface LoadedImage {
+export interface LoadedImage {
   fileId: string;
   localPath: string;
   contentHash?: string;
   image?: PiImage;
 }
 
-interface ReplyContextOptions {
+export interface ReplyContextOptions {
   currentImagePaths?: string[];
   referencedImagePaths?: string[];
   currentFilePaths?: string[];
@@ -1534,7 +1534,7 @@ async function buildPromptPayloadWithReplyContext(
   };
 }
 
-function buildUserMessageWithReplyContext(
+export function buildUserMessageWithReplyContext(
   tgCtx: BotContext,
   content: string,
   opts: ReplyContextOptions = {},
@@ -1625,12 +1625,13 @@ async function collectReferencedImages(
   return images;
 }
 
-async function downloadImageByFileId(
+export async function downloadImageByFileId(
   tgCtx: BotContext,
   token: string,
   fileId: string,
   fallbackMimeType = "image/jpeg",
   includeImage = true,
+  inboundBaseDir = homedir(),
 ): Promise<LoadedImage | null> {
   const loaded = await downloadInboundFileByFileId(
     tgCtx,
@@ -1638,18 +1639,20 @@ async function downloadImageByFileId(
     fileId,
     fallbackMimeType,
     includeImage,
+    inboundBaseDir,
   );
   if (!loaded) return null;
   if (!loaded.image) return null;
   return loaded;
 }
 
-async function downloadInboundFileByFileId(
+export async function downloadInboundFileByFileId(
   tgCtx: BotContext,
   token: string,
   fileId: string,
   fallbackMimeType = "application/octet-stream",
   includeImage = true,
+  inboundBaseDir = homedir(),
 ): Promise<LoadedImage | null> {
   try {
     const file = await tgCtx.api.getFile(fileId) as any;
@@ -1658,7 +1661,7 @@ async function downloadInboundFileByFileId(
     const filePath = String(file.file_path);
     const mimeType = inferImageMimeFromPath(filePath, fallbackMimeType);
     const ext = inferImageExtFromPath(filePath, mimeType);
-    const localPath = resolveInboundImagePath(tgCtx, fileId, ext);
+    const localPath = resolveInboundImagePath(tgCtx, fileId, ext, inboundBaseDir);
 
     let buffer: Buffer | null = null;
 
@@ -1716,7 +1719,7 @@ async function downloadInboundFileByFileId(
   }
 }
 
-function inferImageMimeFromPath(path: string, fallback: string): string {
+export function inferImageMimeFromPath(path: string, fallback: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
   const mimeMap: Record<string, string> = {
     jpg: "image/jpeg",
@@ -1731,13 +1734,13 @@ function inferImageMimeFromPath(path: string, fallback: string): string {
   return mimeMap[ext] || fallback;
 }
 
-function inferImageExtFromPath(path: string, mimeType: string): string {
+export function inferImageExtFromPath(path: string, mimeType: string): string {
   const ext = path.split(".").pop()?.toLowerCase() || "";
   if (ext) return ext;
   return inferImageExtFromMime(mimeType);
 }
 
-function inferImageExtFromMime(mimeType: string): string {
+export function inferImageExtFromMime(mimeType: string): string {
   const map: Record<string, string> = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -1757,9 +1760,10 @@ function resolveInboundImagePath(
   tgCtx: BotContext,
   fileId: string,
   ext: string,
+  inboundBaseDir = homedir(),
 ): string {
   const dir = resolve(
-    homedir(),
+    inboundBaseDir,
     ".pi",
     "telegram",
     "inbound",
@@ -1775,16 +1779,16 @@ function resolveInboundImagePath(
   return resolve(dir, filename);
 }
 
-function sanitizeFileToken(s: string): string {
+export function sanitizeFileToken(s: string): string {
   const cleaned = s.replace(/[^a-zA-Z0-9._-]/g, "_");
   return cleaned.slice(0, 120) || "file";
 }
 
-function normalizePromptPath(p: string): string {
+export function normalizePromptPath(p: string): string {
   return p.replace(/\\/g, "/");
 }
 
-function extractMessageText(msg: any): string {
+export function extractMessageText(msg: any): string {
   if (!msg) return "";
 
   const text = String(msg.text || "").trim();
@@ -1793,7 +1797,7 @@ function extractMessageText(msg: any): string {
   return text || caption;
 }
 
-function formatMessageSender(msg: any, meId: number): string {
+export function formatMessageSender(msg: any, meId: number): string {
   if (!msg) return "";
   if (msg.from?.id === meId) return "self";
   if (msg.from?.username) return `@${msg.from.username}`;
@@ -1802,7 +1806,7 @@ function formatMessageSender(msg: any, meId: number): string {
   return "user";
 }
 
-function truncate(s: string, max: number): string {
+export function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…`;
 }
 
@@ -1840,7 +1844,7 @@ function isSendMessageDraftUnsupportedError(err: unknown): boolean {
   return false;
 }
 
-interface DedupedImageGroups {
+export interface DedupedImageGroups {
   current: LoadedImage[];
   referenced: LoadedImage[];
   all: LoadedImage[];
@@ -1853,7 +1857,7 @@ function ensureImageHash(img: LoadedImage): string | undefined {
   return img.contentHash;
 }
 
-function dedupeLoadedImageGroups(
+export function dedupeLoadedImageGroups(
   currentImages: LoadedImage[],
   referencedImages: LoadedImage[],
 ): DedupedImageGroups {
@@ -1883,7 +1887,7 @@ function dedupeLoadedImageGroups(
   return { current, referenced, all };
 }
 
-function toPromptPathList(images: LoadedImage[]): string[] {
+export function toPromptPathList(images: LoadedImage[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
 
@@ -1898,7 +1902,7 @@ function toPromptPathList(images: LoadedImage[]): string[] {
   return out;
 }
 
-function normalizePromptPathList(paths: string[]): string[] {
+export function normalizePromptPathList(paths: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
 
@@ -1914,7 +1918,7 @@ function normalizePromptPathList(paths: string[]): string[] {
   return out;
 }
 
-function parseModelImageSupport(model: any): boolean | undefined {
+export function parseModelImageSupport(model: any): boolean | undefined {
   if (!model || typeof model !== "object") return undefined;
 
   if (Array.isArray(model.input)) {
@@ -1937,7 +1941,7 @@ function parseModelImageSupport(model: any): boolean | undefined {
   return undefined;
 }
 
-interface StreamUpdater {
+export interface StreamUpdater {
   onTextDelta: (delta: string, fullText: string) => void;
   onToolStart: (toolName?: string) => void;
   onToolError: (toolName?: string) => void;
@@ -2046,7 +2050,7 @@ export function createDraftPreviewModel(maxLen: number): DraftPreviewModel {
   };
 }
 
-async function callSendMessageDraft(
+export async function callSendMessageDraft(
   api: BotContext["api"],
   chatId: number,
   draftId: number,
@@ -2083,15 +2087,15 @@ async function callSendMessageDraft(
   throw new Error("sendMessageDraft not supported by current grammY version");
 }
 
-function createDraftStreamUpdater(
+export function createDraftStreamUpdater(
   api: BotContext["api"],
   chatId: number,
   draftId: number,
   messageThreadId: number | undefined,
   maxLen: number,
   onDraftFallback?: (err: unknown) => void,
+  minEditIntervalMs = 700,
 ): StreamUpdater {
-  const minEditIntervalMs = 700;
   const previewModel = createDraftPreviewModel(maxLen);
   let lastRendered = "";
   let lastEditAt = 0;
@@ -2232,7 +2236,7 @@ export function buildStreamingPreview(text: string, tools: string[], limit: numb
   return buildStreamingPreviewWithToolBlock(text, toolBlock, limit);
 }
 
-function splitMessage(text: string, limit: number): string[] {
+export function splitMessage(text: string, limit: number): string[] {
   if (text.length <= limit) return [text];
   const parts: string[] = [];
   let rest = text;
@@ -2246,20 +2250,20 @@ function splitMessage(text: string, limit: number): string[] {
   return parts;
 }
 
-interface PreparedReply {
+export interface PreparedReply {
   body: string;
   attachments: TgAttachment[];
   warnings: string[];
   replyParameters?: ReplyParameters;
 }
 
-interface CronPreparedReply {
+export interface CronPreparedReply {
   body: string;
   attachments: TgAttachment[];
   warnings: string[];
 }
 
-function prepareCronReply(text: string, tools: string[]): CronPreparedReply {
+export function prepareCronReply(text: string, tools: string[]): CronPreparedReply {
   const extractedReply = extractTgReplyDirective(text || "");
   const extracted = extractTgAttachments(extractedReply.text);
   let body = stripProtocolTags(extracted.text);
@@ -2279,7 +2283,7 @@ function prepareCronReply(text: string, tools: string[]): CronPreparedReply {
   };
 }
 
-function prepareReply(
+export function prepareReply(
   tgCtx: BotContext,
   text: string,
   tools: string[],
@@ -2306,7 +2310,7 @@ function prepareReply(
   };
 }
 
-async function sendPreparedReply(
+export async function sendPreparedReply(
   tgCtx: BotContext,
   prepared: PreparedReply,
   maxLen: number,
@@ -2401,7 +2405,7 @@ const REPLY_SENDER: Record<ReplyMethodName, (ctx: BotContext, media: MediaInput,
   replyWithSticker: (ctx, media, other) => ctx.replyWithSticker(media, other),
 };
 
-async function sendOneAttachment(
+export async function sendOneAttachment(
   tgCtx: BotContext,
   att: TgAttachment,
   other?: SendOther,
@@ -2442,12 +2446,12 @@ const CRON_HELP_TEXT = [
   "- /cron run <id>",
 ].join("\n");
 
-function extractCommandArgs(text: string, command: string): string {
+export function extractCommandArgs(text: string, command: string): string {
   const re = new RegExp(`^\\/${command}(?:@\\w+)?\\s*`, "i");
   return text.replace(re, "").trim();
 }
 
-function splitCommandArgs(input: string): string[] {
+export function splitCommandArgs(input: string): string[] {
   if (!input.trim()) return [];
   const out: string[] = [];
   const re = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
@@ -2459,7 +2463,7 @@ function splitCommandArgs(input: string): string[] {
   return out;
 }
 
-function parseNamedPrompt(input: string): { name?: string; prompt: string } {
+export function parseNamedPrompt(input: string): { name?: string; prompt: string } {
   const raw = String(input || "").trim();
   if (!raw) return { prompt: "" };
 
@@ -2480,7 +2484,7 @@ function parseNamedPrompt(input: string): { name?: string; prompt: string } {
   };
 }
 
-function parseDurationMs(input: string): number | undefined {
+export function parseDurationMs(input: string): number | undefined {
   const s = String(input || "").trim().toLowerCase();
   if (!s) return undefined;
 
@@ -2511,7 +2515,7 @@ function parseDurationMs(input: string): number | undefined {
   return total;
 }
 
-function looksLikeTimezone(input: string): boolean {
+export function looksLikeTimezone(input: string): boolean {
   const s = String(input || "").trim();
   if (!s) return false;
   if (s === "UTC" || s === "GMT") return true;
@@ -2524,7 +2528,7 @@ function formatDateTime(ms?: number): string {
   return new Date(ms).toLocaleString("zh-CN", { hour12: false });
 }
 
-function formatCompactDuration(ms: number): string {
+export function formatCompactDuration(ms: number): string {
   const totalSec = Math.max(1, Math.floor(ms / 1000));
   const days = Math.floor(totalSec / 86400);
   const hours = Math.floor((totalSec % 86400) / 3600);
@@ -2539,7 +2543,7 @@ function formatCompactDuration(ms: number): string {
   return parts.join("");
 }
 
-function formatCronSchedule(schedule: CronSchedule): string {
+export function formatCronSchedule(schedule: CronSchedule): string {
   switch (schedule.kind) {
     case "at":
       return `at ${formatDateTime(schedule.atMs)}`;
@@ -2552,7 +2556,7 @@ function formatCronSchedule(schedule: CronSchedule): string {
   }
 }
 
-function formatCronJobLine(job: CronJobRecord): string {
+export function formatCronJobLine(job: CronJobRecord): string {
   const status = job.enabled ? "🟢" : "⚪";
   const running = job.state.runningRunId ? " ⏳running" : "";
   const lastStatus = job.state.lastStatus ? ` | last=${job.state.lastStatus}` : "";
@@ -2566,7 +2570,7 @@ function formatCronJobLine(job: CronJobRecord): string {
   ].join("\n");
 }
 
-function formatCronStatus(st: { enabled: boolean; totalJobs: number; enabledJobs: number; runningJobs: number; queuedJobs: number; nextRunAtMs?: number }): string {
+export function formatCronStatus(st: { enabled: boolean; totalJobs: number; enabledJobs: number; runningJobs: number; queuedJobs: number; nextRunAtMs?: number }): string {
   return [
     `⏰ 定时服务：${st.enabled ? "开启" : "关闭"}`,
     `总任务：${st.totalJobs}`,

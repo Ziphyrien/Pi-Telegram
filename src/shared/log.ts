@@ -31,7 +31,12 @@ const hlRules: [RegExp, string][] = [
   [/\([^)]+\)/g,                                    "dim"],
 ];
 
-function hl(msg: string): string {
+export interface LogTheme {
+  fg: (color: string, text: string) => string;
+  bold: (text: string) => string;
+}
+
+export function highlightLogMessage(msg: string, theme: Pick<LogTheme, "fg"> = { fg }): string {
   const taken = new Uint8Array(msg.length);
   const ins: { p: number; e: number; c: string }[] = [];
   for (const [re, c] of hlRules) {
@@ -49,15 +54,25 @@ function hl(msg: string): string {
   if (!ins.length) return msg;
   ins.sort((a, b) => b.p - a.p);
   let r = msg;
-  for (const { p, e, c } of ins) r = r.slice(0, p) + fg(c, r.slice(p, e)) + r.slice(e);
+  for (const { p, e, c } of ins) r = r.slice(0, p) + theme.fg(c, r.slice(p, e)) + r.slice(e);
   return r;
 }
 
+export function formatLogLine(
+  tag: string,
+  msg: string,
+  color: string,
+  theme: LogTheme = { fg, bold },
+  timestamp = ts(),
+): string {
+  return `${timestamp} ${theme.bold(theme.fg(color, tag))} ${highlightLogMessage(msg, theme)}`;
+}
+
 export const log = {
-  boot:     (msg: string) => console.log(`${ts()} ${bold(fg("success", "[boot]"))} ${hl(msg)}`),
-  pool:     (msg: string) => console.log(`${ts()} ${bold(fg("borderAccent", "[pool]"))} ${hl(msg)}`),
-  bot:      (i: number, msg: string) => console.log(`${ts()} ${bold(fg("border", `[bot${i}]`))} ${hl(msg)}`),
-  warn:     (msg: string) => console.warn(`${ts()} ${bold(fg("warning", "[warn]"))} ${hl(msg)}`),
-  error:    (tag: string, msg: string) => console.error(`${ts()} ${bold(fg("error", `[${tag}]`))} ${hl(msg)}`),
-  shutdown: (msg: string) => console.log(`${ts()} ${bold(fg("warning", "[shutdown]"))} ${hl(msg)}`),
+  boot:     (msg: string) => console.log(formatLogLine("[boot]", msg, "success")),
+  pool:     (msg: string) => console.log(formatLogLine("[pool]", msg, "borderAccent")),
+  bot:      (i: number, msg: string) => console.log(formatLogLine(`[bot${i}]`, msg, "border")),
+  warn:     (msg: string) => console.warn(formatLogLine("[warn]", msg, "warning")),
+  error:    (tag: string, msg: string) => console.error(formatLogLine(`[${tag}]`, msg, "error")),
+  shutdown: (msg: string) => console.log(formatLogLine("[shutdown]", msg, "warning")),
 };

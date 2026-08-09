@@ -1,6 +1,6 @@
 // src/pi/pool.ts — pi RPC subprocess pool, one per chat
 import { resolve } from "node:path";
-import { PiRpc } from "./rpc.js";
+import { PiRpc, type PiRpcOptions } from "./rpc.js";
 import { log } from "../shared/log.js";
 
 export interface PoolOptions {
@@ -9,6 +9,8 @@ export interface PoolOptions {
   appendSystemPrompt?: string;
   sessionBaseDir: string;
   idleTimeoutMs: number;
+  shutdownTimeoutMs?: number;
+  rpcFactory?: (opts: PiRpcOptions) => PiRpc;
 }
 
 export class PiPool {
@@ -29,13 +31,19 @@ export class PiPool {
   async getFresh(chatKey: string): Promise<PiRpc> {
     const existing = this.instances.get(chatKey);
     if (existing?.alive) {
+      const waitForExit = new Promise<void>((resolve) => existing.once("exit", () => resolve()));
       existing.kill();
       await Promise.race([
-        new Promise<void>((resolve) => existing.once("exit", () => resolve())),
-        new Promise<void>((resolve) => setTimeout(resolve, 2_500)),
+        waitForExit,
+        new Promise<void>((resolve) => setTimeout(resolve, this.getStopTimeoutMs())),
       ]);
+      existing.removeAllListeners();
     }
     return this.spawn(chatKey, false);
+  }
+
+  private getStopTimeoutMs(): number {
+    return Math.max(0, this.opts.shutdownTimeoutMs ?? 2_500);
   }
 
   private buildPiArgs(): string[] {
@@ -50,15 +58,18 @@ export class PiPool {
     // Remove old dead instance listeners
     this.instances.get(chatKey)?.removeAllListeners();
 
-    const inst = new PiRpc({
+    const createRpc = this.opts.rpcFactory ?? ((rpcOpts: PiRpcOptions) => new PiRpc(rpcOpts));
+    const inst = createRpc({
       cwd: this.opts.cwd,
       piArgs: this.buildPiArgs(),
       sessionDir: resolve(this.opts.sessionBaseDir, chatKey),
       continueSession,
     });
 
-    inst.on("exit", (code) => {
-      if (this.instances.get(chatKey) === inst) log.pool(`pi exited for ${chatKey} (code=${code})`);
+    inst.once("exit", (code) => {
+      if (this.instances.get(chatKey) !== inst) return;
+      this.instances.delete(chatKey);
+      log.pool(`pi exited for ${chatKey} (code=${code})`);
     });
 
     inst.start();
@@ -87,14 +98,29 @@ export class PiPool {
 
   async shutdown(): Promise<void> {
     clearInterval(this.timer);
+    const shutdownTimeoutMs = this.getStopTimeoutMs();
     const waits: Promise<unknown>[] = [];
     for (const inst of this.instances.values()) {
       if (inst.alive) {
         inst.removeAllListeners();
+        waits.push(new Promise<void>((resolve) => {
+          let done = false;
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            if (timeout) clearTimeout(timeout);
+            inst.removeListener("exit", finish);
+            resolve();
+          };
+          timeout = setTimeout(finish, shutdownTimeoutMs);
+          timeout.unref?.();
+          inst.once("exit", finish);
+        }));
         inst.kill();
-        waits.push(new Promise((r) => inst.once("exit", r)));
       }
     }
     await Promise.allSettled(waits);
+    this.instances.clear();
   }
 }

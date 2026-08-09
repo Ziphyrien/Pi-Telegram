@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "start": "node dist/main.js",
     "dev": "tsx --watch src/main.ts",
     "pitg": "node dist/main.js",

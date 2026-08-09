@@ -11,13 +11,38 @@ const piEntryJs = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-a
 const piCliPath = resolve(dirname(piEntryJs), "cli.js");
 
 type PromptResult = { text: string; tools: string[] };
-type RpcClientEvent = Parameters<Parameters<RpcClient["onEvent"]>[0]>[0];
+export type RpcClientEvent = Parameters<Parameters<RpcClient["onEvent"]>[0]>[0];
+
+export interface PiRpcClientOptions {
+  cwd: string;
+  cliPath: string;
+  args: string[];
+}
+
+export interface PiRpcClient {
+  process?: ChildProcess | null;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  prompt(message: string, images?: unknown): Promise<void>;
+  onEvent(handler: (event: RpcClientEvent) => void): () => void;
+  getStderr(): string;
+  getAvailableModels(): Promise<PiModelInfo[]>;
+  getState(): Promise<Record<string, unknown>>;
+  getSessionStats(): Promise<PiSessionStats>;
+  setModel(provider: string, modelId: string): Promise<void>;
+  setThinkingLevel(level: unknown): Promise<void>;
+  abort(): Promise<void>;
+}
+
+export type PiRpcClientFactory = (opts: PiRpcClientOptions) => PiRpcClient;
 
 export interface PiRpcOptions {
   cwd: string;
   piArgs: string[];
   sessionDir: string;
   continueSession: boolean;
+  rpcClientFactory?: PiRpcClientFactory;
+  killGraceMs?: number;
 }
 
 export interface PromptHooks {
@@ -28,7 +53,7 @@ export interface PromptHooks {
 }
 
 export class PiRpc extends EventEmitter {
-  private client: RpcClient | null = null;
+  private client: PiRpcClient | null = null;
   private startPromise: Promise<void> | null = null;
   alive = false;
   streaming = false;
@@ -126,7 +151,9 @@ export class PiRpc extends EventEmitter {
   private async startClient(): Promise<void> {
     mkdirSync(this.opts.sessionDir, { recursive: true });
 
-    const client = new RpcClient({
+    const createClient = this.opts.rpcClientFactory
+      ?? ((clientOpts: PiRpcClientOptions) => new RpcClient(clientOpts) as unknown as PiRpcClient);
+    const client = createClient({
       cwd: this.opts.cwd,
       cliPath: piCliPath,
       args: [
@@ -147,12 +174,12 @@ export class PiRpc extends EventEmitter {
       throw err;
     }
 
-    const proc = (client as any).process as ChildProcess | null | undefined;
+    const proc = client.process;
     proc?.on("error", (err) => { this._stderrTail = this.stderrLines(this.toError(err).message); this.notifyExit(null); });
     proc?.on("exit", (code) => { this.notifyExit(code); });
   }
 
-  private async ensureStarted(): Promise<RpcClient> {
+  private async ensureStarted(): Promise<PiRpcClient> {
     if (!this.startPromise) throw new Error("pi process not started");
     try {
       await this.startPromise;
@@ -165,7 +192,7 @@ export class PiRpc extends EventEmitter {
     return this.client;
   }
 
-  private withClient<T>(run: (client: RpcClient) => Promise<T>): Promise<T> {
+  private withClient<T>(run: (client: PiRpcClient) => Promise<T>): Promise<T> {
     return this.ensureStarted().then(run);
   }
 
@@ -285,15 +312,15 @@ export class PiRpc extends EventEmitter {
   }
 
   async getAvailableModels(): Promise<PiModelInfo[]> {
-    return this.withClient((client) => client.getAvailableModels() as unknown as Promise<PiModelInfo[]>);
+    return this.withClient((client) => client.getAvailableModels());
   }
 
   async getState(): Promise<Record<string, unknown>> {
-    return this.withClient((client) => client.getState() as unknown as Promise<Record<string, unknown>>);
+    return this.withClient((client) => client.getState());
   }
 
   async getSessionStats(): Promise<PiSessionStats> {
-    return this.withClient((client) => client.getSessionStats() as unknown as Promise<PiSessionStats>);
+    return this.withClient((client) => client.getSessionStats());
   }
 
   rpcSetModel(provider: string, modelId: string): Promise<void> {
@@ -301,7 +328,7 @@ export class PiRpc extends EventEmitter {
   }
 
   rpcSetThinkingLevel(level: string): Promise<void> {
-    return this.withClient((client) => client.setThinkingLevel(level as any));
+    return this.withClient((client) => client.setThinkingLevel(level));
   }
 
   abort(): void {
@@ -312,7 +339,7 @@ export class PiRpc extends EventEmitter {
   kill(): void {
     if (!this.alive) return;
     const client = this.client;
-    const proc = (client as any)?.process as ChildProcess | null | undefined;
+    const proc = client?.process;
     this.abort();
     setTimeout(() => {
       if (!this.alive) return;
@@ -323,6 +350,6 @@ export class PiRpc extends EventEmitter {
         return;
       }
       proc?.kill("SIGTERM");
-    }, 2000);
+    }, this.opts.killGraceMs ?? 2000);
   }
 }

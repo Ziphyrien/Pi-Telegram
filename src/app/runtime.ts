@@ -23,18 +23,18 @@ const cronServices: CronService[] = [];
 let shuttingDown = false;
 let booted = false;
 
-function formatErr(err: unknown): string {
+export function formatErr(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
 
-function getTelegramErrorCode(err: unknown): number | undefined {
+export function getTelegramErrorCode(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;
   const code = (err as Record<string, unknown>).error_code;
   return typeof code === "number" ? code : undefined;
 }
 
-function describeRunnerError(err: unknown): string {
+export function describeRunnerError(err: unknown): string {
   const details: string[] = [formatErr(err)];
 
   if (err && typeof err === "object") {

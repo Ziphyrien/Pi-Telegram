@@ -99,4 +99,5 @@ export interface CronServiceOptions {
   maxJobsPerChat: number;
   maxRunMs: number;
   defaultPolicy: CronJobPolicy;
+  executorTimeoutMs?: number;
 }

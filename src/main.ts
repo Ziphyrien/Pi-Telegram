@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 // src/main.ts — entry point
+import { pathToFileURL } from "node:url";
 import { runApp } from "./app/runtime.js";
 
-void runApp();
+export function main(run: () => Promise<void> = runApp): void {
+  void run();
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  main();
+}
