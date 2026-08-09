@@ -39,7 +39,7 @@
     "sanitize-html": "^2.17.1"
   },
   "devDependencies": {
-    "@grammyjs/types": "^3.25.0",
+    "@grammyjs/types": "^4.0.0",
     "@types/node": "^24.0.0",
     "bun-types": "^1.3.14",
     "typescript": "^7.0.2"
