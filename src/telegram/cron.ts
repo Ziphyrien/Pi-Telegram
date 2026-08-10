@@ -14,7 +14,7 @@ import {
   formatCronSchedule,
   formatCronStatus,
   formatDateTime,
-  CRON_HELP_TEXT,
+  getCronHelpText,
   extractCommandArgs,
   isMessageNotModifiedError,
   looksLikeTimezone,
@@ -308,7 +308,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       const sub = (args.shift() || "help").toLowerCase();
 
     if (sub === "help" || sub === "h" || sub === "?") {
-      await context.reply(CRON_HELP_TEXT);
+      await context.reply(getCronHelpText());
       return;
     }
 

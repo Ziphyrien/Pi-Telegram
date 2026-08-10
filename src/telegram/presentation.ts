@@ -436,20 +436,23 @@ export async function sendReply(
 }
 
 
-export const CRON_HELP_TEXT = [
-  t("⏰ /cron 用法"),
-  t("- /cron（打开交互菜单）"),
-  "- /cron list",
-  "- /cron stat",
-  t("- /cron add at <ISO时间> <内容>（可用 名称||内容 指定任务名）"),
-  t("- /cron add every <间隔> <内容>（如 10m、2h、1d；可用 名称||内容）"),
-  t("- /cron add cron \"<表达式>\" [时区] <内容>（可用 名称||内容）"),
-  "- /cron on <id>",
-  "- /cron off <id>",
-  "- /cron del <id>",
-  t("- /cron rename <id> <新名称>"),
-  "- /cron run <id>",
-].join("\n");
+/** Build the /cron help text lazily so t() runs after language selection at boot. */
+export function getCronHelpText(): string {
+  return [
+    t("⏰ /cron 用法"),
+    t("- /cron（打开交互菜单）"),
+    "- /cron list",
+    "- /cron stat",
+    t("- /cron add at <ISO时间> <内容>（可用 名称||内容 指定任务名）"),
+    t("- /cron add every <间隔> <内容>（如 10m、2h、1d；可用 名称||内容）"),
+    t("- /cron add cron \"<表达式>\" [时区] <内容>（可用 名称||内容）"),
+    "- /cron on <id>",
+    "- /cron off <id>",
+    "- /cron del <id>",
+    t("- /cron rename <id> <新名称>"),
+    "- /cron run <id>",
+  ].join("\n");
+}
 
 export function extractCommandArgs(text: string, command: string): string {
   const prefix = new RegExp(`^\\/${command}(?:@\\w+)?\\s*`, "i");
