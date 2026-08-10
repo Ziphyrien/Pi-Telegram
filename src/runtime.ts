@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import { AgentPool } from "./agent.js";
 import { Scheduler } from "./scheduler.js";
+import { detectLanguage, setLanguage, t } from "./i18n.js";
 import { createBot } from "./telegram/bot.js";
 import { getRegisteredToolSystemPrompt } from "./telegram/presentation.js";
 import { log } from "./platform/logger.js";
@@ -18,6 +19,7 @@ import {
   ensureAppDirectories,
   ensureSettingsFileExists,
   normalizeCronConfig,
+  normalizeLanguage,
   normalizeStreamByChat,
   readAppConfig,
   cronRoot,
@@ -87,10 +89,10 @@ function startTelegramRunner(bot: ReturnType<typeof createBot>, botName: string)
   const scheduleRestart = (reason: string, delayMs = 5000): void => {
     if (resources.stopping || retryTimer) return;
     const seconds = Math.max(1, Math.round(delayMs / 1000));
-    log.warn(`"${botName}" 轮询已停止（${reason}），${seconds} 秒后重试`);
+    log.warn(`"${botName}${t("\" 轮询已停止（")}${reason}${t("），")}${seconds}${t(" 秒后重试")}`);
     retryTimer = setTimeout(() => {
       retryTimer = null;
-      log.warn(`"${botName}" 正在重启 Telegram 轮询...`);
+      log.warn(`"${botName}${t("\" 正在重启 Telegram 轮询...")}`);
       start();
     }, delayMs);
   };
@@ -105,13 +107,13 @@ function startTelegramRunner(bot: ReturnType<typeof createBot>, botName: string)
       (error) => {
         if (resources.stopping || runner !== current) return;
         const code = getTelegramErrorCode(error);
-        log.error("boot", `"${botName}" 轮询异常：${describeRunnerError(error)}`);
+        log.error("boot", `"${botName}${t("\" 轮询异常：")}${describeRunnerError(error)}`);
         if (code === 401) {
-          log.warn(`"${botName}" token 可能无效/已失效，请检查 settings.json（本次不自动重启）`);
+          log.warn(`"${botName}${t("\" token 可能无效/已失效，请检查 settings.json（本次不自动重启）")}`);
           return;
         }
         if (code === 409) {
-          log.warn(`"${botName}" 可能存在重复实例（同 token 多进程轮询）`);
+          log.warn(`"${botName}${t("\" 可能存在重复实例（同 token 多进程轮询）")}`);
           scheduleRestart("runner crashed code=409", 15_000);
           return;
         }
@@ -126,7 +128,7 @@ function startTelegramRunner(bot: ReturnType<typeof createBot>, botName: string)
       runner = run(bot, { runner: { maxRetryTime: 7 * 24 * 60 * 60 * 1000 } });
       watch(runner);
     } catch (error) {
-      log.error("boot", `"${botName}" 启动轮询失败：${describeRunnerError(error)}`);
+      log.error("boot", `"${botName}${t("\" 启动轮询失败：")}${describeRunnerError(error)}`);
       scheduleRestart("start failed");
     }
   };
@@ -160,7 +162,7 @@ function refreshChangelogVersion(config: AppConfig, appVersion: string): boolean
 
   const changelog = getNewChangelogText(config.lastChangelogVersion);
   if (changelog) {
-    log.warn(`检测到新版本变更（${config.lastChangelogVersion} -> ${appVersion}）：`);
+    log.warn(`${t("检测到新版本变更（")}${config.lastChangelogVersion} -> ${appVersion}${t("）：")}`);
     for (const line of changelog.split(/\r?\n/)) if (line.trim()) log.warn(line);
   }
   config.lastChangelogVersion = appVersion;
@@ -181,20 +183,23 @@ export async function runApp(): Promise<void> {
 
   const { name: packageName, version: appVersion } = getPackageMeta();
   if (ensureSettingsFileExists(appVersion)) {
-    log.warn(`settings.json 不存在，已自动生成模板: ${settingsPath}`);
-    log.warn("请先填写 bot token，再重新启动。\n");
+    log.warn(`${t("settings.json 不存在，已自动生成模板: ")}${settingsPath}`);
+    log.warn(t("请先填写 bot token，再重新启动。\n"));
     process.exit(1);
     return;
   }
 
   const config = readAppConfig();
-  let rewriteSettings = refreshChangelogVersion(config, appVersion);
+  const language = normalizeLanguage(config.language);
+  config.language = language.value;
+  setLanguage(detectLanguage(config.language));
+  let rewriteSettings = refreshChangelogVersion(config, appVersion) || language.changed;
   log.boot(`Pi-Telegram v${appVersion}`);
 
   if (shouldCheckUpdatesOnStartup()) {
     void checkLatestVersion(packageName, appVersion).then((version) => {
       if (!version) return;
-      log.warn(`发现新版本 ${version} 可用。${getUpdateInstruction(packageName)}`);
+      log.warn(`${t("发现新版本 ")}${version}${t(" 可用。")}${getUpdateInstruction(packageName)}`);
       log.warn("Changelog: https://github.com/Ziphyrien/Pi-Telegram/blob/main/CHANGELOG.md");
     });
   }
@@ -247,7 +252,7 @@ export async function runApp(): Promise<void> {
         try {
           await writeSettings();
         } catch (error) {
-          log.error("config", `保存流式配置失败 (${botConfig.name}:${key}=${enabled ? 1 : 0}): ${formatErr(error)}`);
+          log.error("config", `${t("保存流式配置失败 (")}${botConfig.name}:${key}=${enabled ? 1 : 0}): ${formatErr(error)}`);
           throw error;
         }
       },
@@ -260,7 +265,7 @@ export async function runApp(): Promise<void> {
   }
 
   if (rewriteSettings) {
-    writeSettings().catch((error) => log.error("config", `写回 settings.json 失败：${formatErr(error)}`));
+    writeSettings().catch((error) => log.error("config", `${t("写回 settings.json 失败：")}${formatErr(error)}`));
   }
 
   process.on("SIGINT", () => void resources.shutdown());

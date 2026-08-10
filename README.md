@@ -68,6 +68,7 @@ bun run dev
   ],
   "idleTimeoutMs": 600000,
   "maxResponseLength": 4000,
+  "language": "en",
   "cron": {
     "enabled": true,
     "defaultTimezone": "Asia/Shanghai",
@@ -89,6 +90,7 @@ bun run dev
 - `bots[].cwd`: pi 的工作目录
 - `idleTimeoutMs`: 聊天空闲多久后自动回收对应的 pi 进程
 - `maxResponseLength`: 单条回复的最大长度，超出会自动分段发送
+- `language`: 界面语言，`"zh"`（中文）或 `"en"`（English）。留空或不设置时自动检测：系统语言为中文则用中文，否则用英文
 - `cron`: 定时任务相关配置
 
 `allowedUsers` 为空时，不做访问限制。

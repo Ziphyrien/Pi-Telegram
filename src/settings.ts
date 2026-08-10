@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type { AppConfig, CronConfig } from "./types.js";
+import { detectLanguage, type Language } from "./i18n.js";
 export type { AppConfig, BotConfig, CronConfig } from "./types.js";
 
 export const telegramRoot = resolve(homedir(), ".pi", "telegram");
@@ -42,6 +43,7 @@ export function createDefaultSettingsTemplate(appVersion: string): AppConfig {
     }],
     idleTimeoutMs: 600000,
     maxResponseLength: 4000,
+    language: detectLanguage(),
     lastChangelogVersion: appVersion,
     cron: getDefaultCronConfig(),
   };
@@ -71,6 +73,16 @@ function normalizeInteger(raw: unknown, minimum: number, fallback: number): Norm
   const parsed = Number(raw);
   const value = Number.isFinite(parsed) && parsed >= minimum ? Math.floor(parsed) : fallback;
   return { value, changed: value !== raw };
+}
+
+/**
+ * Normalize the language setting: only "zh" and "en" are accepted.
+ * Missing/undefined is kept as-is (auto-detect from the system locale at boot).
+ */
+export function normalizeLanguage(input: unknown): NormalizationResult<Language | undefined> {
+  if (input === undefined) return { value: undefined, changed: false };
+  if (input === "zh" || input === "en") return { value: input, changed: false };
+  return { value: undefined, changed: true };
 }
 
 export function normalizeCronConfig(input: CronConfig | undefined): NormalizationResult<Required<CronConfig>> {

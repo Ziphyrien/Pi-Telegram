@@ -34,6 +34,7 @@ import {
   replyScopeKey,
   truncate,
 } from "./media.js";
+import { t } from "../i18n.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
 
@@ -85,7 +86,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     botIndex,
     botKey,
     pool,
-    outdatedMenuText: "菜单已更新，请重试",
+    outdatedMenuText: t("菜单已更新，请重试"),
     initialStreamByChat,
     onStreamModeChange,
   });
@@ -103,7 +104,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       if (config.allowedUsers.includes(uid!) || config.allowedUsers.includes(uname!)) {
         return next();
       }
-      await context.reply("⛔ 无权限");
+      await context.reply(t("⛔ 无权限"));
     });
   }
 
@@ -211,11 +212,11 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     return { aborted: true, mode: active.mode };
   };
 
-  commandGroup.command("status", "查看状态", async (context) => {
+  commandGroup.command("status", t("查看状态"), async (context) => {
     const chatId = context.chat.id;
     const key = chatKey(botKey, chatId);
     const session = pool.has(key);
-    let modelLabel = "默认";
+    let modelLabel = t("默认");
     let providerLabel = "";
     let thinkingSupported = true;
     let thinkingLabel = "";
@@ -266,7 +267,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     await context.reply(lines.join("\n"));
   });
 
-  commandGroup.command("new", "新建会话", async (context) => {
+  commandGroup.command("new", t("新建会话"), async (context) => {
     const chatId = context.chat.id;
     const key = chatKey(botKey, chatId);
     const session = pool.has(key);
@@ -281,20 +282,20 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     try {
       await pool.getFresh(key);
-      await context.reply("🆕 已新建会话");
+      await context.reply(t("🆕 已新建会话"));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await context.reply(`❌ 新建会话失败：${truncate(message, 1000)}`);
+      await context.reply(`${t("❌ 新建会话失败：")}${truncate(message, 1000)}`);
     }
   });
 
-  commandGroup.command("abort", "中止当前操作", async (context) => {
+  commandGroup.command("abort", t("中止当前操作"), async (context) => {
     const chatId = context.chat.id;
     const key = chatKey(botKey, chatId);
     const session = pool.has(key);
 
     if (!session?.alive) {
-      await context.reply("当前无操作");
+      await context.reply(t("当前无操作"));
       return;
     }
 
@@ -306,26 +307,26 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     if (stopped.aborted) {
       if (queued > 0) {
-        await context.reply(`📥 队列保留 ${queued} 条，继续执行中\n如需清空队列可用 /abortall`);
+        await context.reply(`${t("📥 队列保留 ")}${queued}${t(" 条，继续执行中\n如需清空队列可用 /abortall")}`);
       }
       return;
     }
 
     if (queued > 0) {
-      await context.reply(`当前无运行任务，队列中还有 ${queued} 条`);
+      await context.reply(`${t("当前无运行任务，队列中还有 ")}${queued}${t(" 条")}`);
       return;
     }
 
-    await context.reply("当前无操作");
+    await context.reply(t("当前无操作"));
   });
 
-  commandGroup.command("abortall", "中止并清空队列", async (context) => {
+  commandGroup.command("abortall", t("中止并清空队列"), async (context) => {
     const chatId = context.chat.id;
     const key = chatKey(botKey, chatId);
     const session = pool.has(key);
 
     if (!session?.alive || (!session.running && session.queuedCount === 0)) {
-      await context.reply("当前无操作");
+      await context.reply(t("当前无操作"));
       return;
     }
 
@@ -336,42 +337,42 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     });
 
     if (cleared > 0) {
-      await context.reply(`🧹 已清空队列 ${cleared} 条`);
+      await context.reply(`${t("🧹 已清空队列 ")}${cleared}${t(" 条")}`);
       return;
     }
 
     if (!stopped.aborted) {
-      await context.reply("当前无运行任务");
+      await context.reply(t("当前无运行任务"));
     }
   });
 
 
-  commandGroup.command("model", "切换模型", async (context) => {
+  commandGroup.command("model", t("切换模型"), async (context) => {
     const chatId = context.chat.id;
 
     try {
       await menus.refreshModelsForChat(chatId);
     } catch (err) {
-      await context.reply(`❌ 获取模型列表失败：${(err as Error).message}`);
+      await context.reply(`${t("❌ 获取模型列表失败：")}${(err as Error).message}`);
       return;
     }
 
-    await context.reply("🔄 选择 Provider:", { reply_markup: modelMenu });
+    await context.reply(t("🔄 选择 Provider:"), { reply_markup: modelMenu });
   });
 
-  commandGroup.command("stream", "切换流式输出", async (context) => {
-    await context.reply("⚙️ 输出模式:", { reply_markup: streamMenu });
+  commandGroup.command("stream", t("切换流式输出"), async (context) => {
+    await context.reply(t("⚙️ 输出模式:"), { reply_markup: streamMenu });
   });
 
-  commandGroup.command("thinking", "切换思考程度", async (context) => {
+  commandGroup.command("thinking", t("切换思考程度"), async (context) => {
     const chatId = context.chat.id;
     const supported = await menus.supportsThinkingForChat(chatId);
     if (!supported) {
-      await context.reply("当前模型不支持思考等级");
+      await context.reply(t("当前模型不支持思考等级"));
       return;
     }
     await menus.ensureThinkingForChat(chatId);
-    await context.reply("🧠 思考程度:", { reply_markup: thinkingMenu });
+    await context.reply(t("🧠 思考程度:"), { reply_markup: thinkingMenu });
   });
 
   const cronFeatures = createCronFeatures({
@@ -473,8 +474,8 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const useDraftStream = useStream && shouldUseDraftStreaming(context);
 
     const initialStatus = ahead > 0
-      ? `⏳ 排队中（前方 ${ahead} 条）...`
-      : "⏳ 思考中...";
+      ? `${t("⏳ 排队中（前方 ")}${ahead}${t(" 条）...")}`
+      : t("⏳ 思考中...");
     const status = !useStream
       ? await context.reply(initialStatus)
       : null;
@@ -486,7 +487,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const onStart = () => {
       promptTracker.onStart();
       if (!status || ahead <= 0) return;
-      void status.editText("⏳ 思考中...").catch(() => {});
+      void status.editText(t("⏳ 思考中...")).catch(() => {});
     };
 
     try {
@@ -503,7 +504,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             getMessageThreadId(context),
             maxResponseLength,
             (err) => {
-              log.warn(`chat${chatId} sendRichMessageDraft 预览失败，已停用本次流式预览：${describeTelegramSendError(err)}`);
+              log.warn(`chat${chatId}${t(" sendRichMessageDraft 预览失败，已停用本次流式预览：")}${describeTelegramSendError(err)}`);
             },
           )
           : createSilentStreamUpdater();
@@ -562,17 +563,17 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
           }
 
           if (abortDirective.showAbortNotice) {
-            await context.reply("🛑 已中止").catch(() => {});
+            await context.reply(t("🛑 已中止")).catch(() => {});
           }
         } else if (consumeAbortNoticeSuppression(chatId)) {
           await status?.delete().catch(() => {});
         } else if (status) {
-          await reportStatusOrReply(context, status, "🛑 已中止");
+          await reportStatusOrReply(context, status, t("🛑 已中止"));
         } else {
-          await context.reply("🛑 已中止").catch(() => {});
+          await context.reply(t("🛑 已中止")).catch(() => {});
         }
       } else if (useStream && streamedText.trim()) {
-        const errLine = `⚠️ 生成中断：${truncate(message, 300)}`;
+        const errLine = `${t("⚠️ 生成中断：")}${truncate(message, 300)}`;
         const merged = truncate(`${streamedText}\n\n${errLine}`, maxResponseLength);
         if (status) {
           await reportStatusOrReply(context, status, merged);
@@ -580,7 +581,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
           await context.reply(merged).catch(() => {});
         }
       } else {
-        const errorText = `❌ 错误：${message}`;
+        const errorText = `${t("❌ 错误：")}${message}`;
         if (status) {
           await reportStatusOrReply(context, status, errorText);
         } else {
@@ -614,7 +615,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
   // Photos
   bot.on("message:photo", async (context) => {
-    const caption = context.message.caption || "请描述这张图片";
+    const caption = context.message.caption || t("请描述这张图片");
     rememberReplyMessage(replyScopeKey(context), "user", context.message.message_id, caption);
     rememberReferencedReply(context);
 
@@ -646,7 +647,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
   // Generic files (documents)
   bot.on("message:document", async (context) => {
     const document = context.message.document;
-    const baseText = context.message.caption || document.file_name || "请处理这个文件";
+    const baseText = context.message.caption || document.file_name || t("请处理这个文件");
     rememberReplyMessage(replyScopeKey(context), "user", context.message.message_id, baseText);
     rememberReferencedReply(context);
 

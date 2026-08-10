@@ -15,6 +15,7 @@ import type {
   SchedulerStatus,
   CronStoreData,
 } from "./types.js";
+import { t } from "./i18n.js";
 
 const STORE_VERSION = 1 as const;
 const MAX_TIMER_SLICE_MS = 24 * 60 * 60 * 1000;
@@ -142,14 +143,14 @@ export class Scheduler {
   async create(input: CronCreateInput): Promise<CronJobRecord> {
     return this.runExclusive(async () => {
       const prompt = String(input.prompt || "").trim();
-      if (!prompt) throw new Error("任务内容不能为空");
+      if (!prompt) throw new Error(t("任务内容不能为空"));
 
       const chatId = Number(input.chatId);
-      if (!Number.isSafeInteger(chatId)) throw new Error("chatId 非法");
+      if (!Number.isSafeInteger(chatId)) throw new Error(t("chatId 非法"));
 
       const perChatCount = [...this.jobs.values()].filter((x) => x.chatId === chatId).length;
       if (perChatCount >= this.opts.maxJobsPerChat) {
-        throw new Error(`当前聊天任务已达上限（${this.opts.maxJobsPerChat}）`);
+        throw new Error(`${t("当前聊天任务已达上限（")}${this.opts.maxJobsPerChat}${t("）")}`);
       }
 
       const now = Date.now();
@@ -277,7 +278,7 @@ export class Scheduler {
         if (!job) continue;
         this.jobs.set(job.id, job);
       } catch (err) {
-        log.warn(`cron 跳过非法任务：${toErrorMessage(err)}`);
+        log.warn(`${t("cron 跳过非法任务：")}${toErrorMessage(err)}`);
       }
     }
   }
@@ -292,7 +293,7 @@ export class Scheduler {
       job.state.runningRunId = undefined;
       job.state.runningAtMs = undefined;
       job.state.lastStatus = "error";
-      job.state.lastError = "检测到上次进程异常退出，任务已恢复待调度";
+      job.state.lastError = t("检测到上次进程异常退出，任务已恢复待调度");
       job.state.consecutiveFailures += 1;
       job.updatedAtMs = now;
 
@@ -357,7 +358,7 @@ export class Scheduler {
       } catch (err) {
         job.enabled = false;
         job.state.lastStatus = "error";
-        job.state.lastError = `cron 表达式无效：${toErrorMessage(err)}`;
+        job.state.lastError = `${t("cron 表达式无效：")}${toErrorMessage(err)}`;
         job.state.nextRunAtMs = 0;
       }
       return;
@@ -391,7 +392,7 @@ export class Scheduler {
         if (lateness > job.policy.maxLatenessMs) {
           job.enabled = false;
           job.state.lastStatus = "missed";
-          job.state.lastError = "任务已过期，超过允许延迟窗口";
+          job.state.lastError = t("任务已过期，超过允许延迟窗口");
           return 0;
         }
 
@@ -607,12 +608,12 @@ export class Scheduler {
 
   private async runExecutor(ctx: CronExecuteContext): Promise<{ ok: boolean; error?: string }> {
     if (!this.executor) {
-      return { ok: false, error: "cron executor 未配置" };
+      return { ok: false, error: t("cron executor 未配置") };
     }
 
     const timeoutMs = this.opts.executorTimeoutMs ?? Math.max(5_000, this.opts.maxRunMs);
 
-    const timeoutError = `任务执行超时（>${Math.round(timeoutMs / 1000)}s）`;
+    const timeoutError = `${t("任务执行超时（>")}${Math.round(timeoutMs / 1000)}${t("s）")}`;
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -676,14 +677,14 @@ export class Scheduler {
 
 function normalizeSchedule(schedule: CronSchedule, defaultTimezone: string, now: number): CronSchedule {
   if (!schedule || typeof schedule !== "object") {
-    throw new Error("缺少 schedule");
+    throw new Error(t("缺少 schedule"));
   }
 
   switch (schedule.kind) {
     case "at": {
       const atMs = Number(schedule.atMs);
       if (!Number.isFinite(atMs) || atMs <= 0) {
-        throw new Error("atMs 非法");
+        throw new Error(t("atMs 非法"));
       }
       return { kind: "at", atMs: Math.floor(atMs) };
     }
@@ -692,10 +693,10 @@ function normalizeSchedule(schedule: CronSchedule, defaultTimezone: string, now:
       const everyMs = Number(schedule.everyMs);
       const anchorMs = Number(schedule.anchorMs || now);
       if (!Number.isFinite(everyMs) || everyMs < 1000) {
-        throw new Error("everyMs 不能小于 1000ms");
+        throw new Error(t("everyMs 不能小于 1000ms"));
       }
       if (!Number.isFinite(anchorMs) || anchorMs <= 0) {
-        throw new Error("anchorMs 非法");
+        throw new Error(t("anchorMs 非法"));
       }
       return {
         kind: "every",
@@ -706,13 +707,13 @@ function normalizeSchedule(schedule: CronSchedule, defaultTimezone: string, now:
 
     case "cron": {
       const expr = String(schedule.expr || "").trim();
-      if (!expr) throw new Error("cron 表达式不能为空");
+      if (!expr) throw new Error(t("cron 表达式不能为空"));
       const timezone = String(schedule.timezone || defaultTimezone).trim() || defaultTimezone;
       return { kind: "cron", expr, timezone };
     }
 
     default:
-      throw new Error(`未知 schedule.kind: ${(schedule as any)?.kind}`);
+      throw new Error(`${t("未知 schedule.kind: ")}${(schedule as any)?.kind}`);
   }
 }
 
@@ -831,7 +832,7 @@ function normalizeJobName(nameInput: unknown, prompt: string, id: string): strin
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (!normalized) return `任务-${id}`;
+  if (!normalized) return `${t("任务-")}${id}`;
   if (normalized.length <= 48) return normalized;
   return `${normalized.slice(0, 48)}…`;
 }
@@ -842,13 +843,13 @@ function deriveNameFromPrompt(prompt: string, id: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (!p) return `任务-${id}`;
+  if (!p) return `${t("任务-")}${id}`;
 
   const keyword = p
     .replace(/^(["'“”‘’\-•\s]+)/, "")
     .trim();
 
-  if (!keyword) return `任务-${id}`;
+  if (!keyword) return `${t("任务-")}${id}`;
   if (keyword.length <= 24) return keyword;
   return `${keyword.slice(0, 24)}…`;
 }
