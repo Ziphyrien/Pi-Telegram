@@ -182,6 +182,9 @@ export async function runApp(): Promise<void> {
   ensureAppDirectories();
 
   const { name: packageName, version: appVersion } = getPackageMeta();
+  // Activate the auto-detected language before any user-facing bootstrap logs
+  // (first-run warnings below run before the config file is available).
+  setLanguage(detectLanguage());
   if (ensureSettingsFileExists(appVersion)) {
     log.warn(`${t("settings.json 不存在，已自动生成模板: ")}${settingsPath}`);
     log.warn(t("请先填写 bot token，再重新启动。\n"));
