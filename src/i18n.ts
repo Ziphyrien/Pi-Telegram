@@ -24,12 +24,12 @@ export function getLanguage(): Language {
 /**
  * Resolve the language to use:
  * 1. explicit `language` value from settings.json ("zh" | "en")
- * 2. system locale (LANG / LC_ALL): Chinese locales -> zh, everything else -> en
+ * 2. system locale (LC_ALL / LANG): Chinese locales -> zh, everything else -> en
  * 3. fallback: "en" (non-Chinese or undetectable locales)
  */
 export function detectLanguage(explicit?: string): Language {
   if (explicit === "zh" || explicit === "en") return explicit;
-  const locale = (process.env.LC_ALL ?? process.env.LANG ?? "").toLowerCase();
+  const locale = (process.env.LC_ALL || process.env.LANG || "").toLowerCase();
   if (locale.startsWith("zh")) return "zh";
   return "en";
 }

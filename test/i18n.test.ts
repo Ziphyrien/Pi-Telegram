@@ -47,6 +47,9 @@ describe("i18n", () => {
       assert.equal(detectLanguage(), "en");
       process.env.LANG = "fr_FR.UTF-8";
       assert.equal(detectLanguage(), "en");
+      process.env.LC_ALL = "";
+      process.env.LANG = "zh_CN.UTF-8";
+      assert.equal(detectLanguage(), "zh");
       delete process.env.LANG;
       assert.equal(detectLanguage(), "en");
     } finally {
