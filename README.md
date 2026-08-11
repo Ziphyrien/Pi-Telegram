@@ -53,7 +53,7 @@ bun run dev
 
 ## 配置文件说明
 
-默认模板如下：
+默认模板示例如下（`language` 会根据系统语言生成；下面以中文环境为例）：
 
 ```json
 {
@@ -68,7 +68,7 @@ bun run dev
   ],
   "idleTimeoutMs": 600000,
   "maxResponseLength": 4000,
-  "language": "en",
+  "language": "zh",
   "cron": {
     "enabled": true,
     "defaultTimezone": "Asia/Shanghai",
