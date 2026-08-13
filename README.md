@@ -4,33 +4,35 @@
 [![npm version](https://img.shields.io/npm/v/pi-telegram?logo=npm)](https://www.npmjs.com/package/pi-telegram)
 [![npm downloads](https://img.shields.io/npm/dm/pi-telegram)](https://www.npmjs.com/package/pi-telegram)
 
-Pi-Telegram 是一个桥接程序。
-它把 Telegram 机器人收到的消息转给 pi coding agent，再把结果发回 Telegram。
+**English** · [简体中文](README.zh-CN.md)
 
-## 它能做什么
+Pi-Telegram connects Telegram bots to the [pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent): messages go to pi, and its responses return to Telegram.
 
-- 在 Telegram 聊天里直接使用 pi
-- 支持文本、图片、文档消息
-- 每个聊天独立会话，互不干扰
-- 支持定时任务
-- 支持多个 bot 同时运行
+It supports text, images, documents, isolated sessions per chat, scheduled tasks, and multiple bots in one process.
 
-## 运行前准备
+## Quick Start
 
-1. 安装 Node.js
-2. 根据[教程](https://linux.do/t/topic/1680124)安装配置[pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)，并确认终端可以直接执行 `pi`并与其正常对话
-3. 在 BotFather 创建 Telegram bot，拿到 token
+Requirements:
 
-## 安装
+- Node.js 22.19 or newer
+- A working `pi` installation ([setup guide](https://linux.do/t/topic/1680124))
+- A Telegram bot token from [BotFather](https://t.me/BotFather)
 
-### 全局安装
+Make sure `pi` runs normally from your terminal, then install and start Pi-Telegram:
 
 ```bash
 npm install -g pi-telegram
 pitg
 ```
 
-### 本地开发运行
+On first launch, Pi-Telegram creates `settings.json` and exits:
+
+- Linux/macOS: `~/.pi/telegram/settings.json`
+- Windows: `%USERPROFILE%/.pi/telegram/settings.json`
+
+Replace the placeholder token with your BotFather token, then run `pitg` again.
+
+### Run From Source
 
 ```bash
 git clone https://github.com/Ziphyrien/Pi-Telegram.git
@@ -40,20 +42,11 @@ bun run build
 bun run dev
 ```
 
-测试：`bun run test`。
+Run tests with `bun run test`.
 
-## 首次启动
+## Configuration
 
-第一次运行会自动生成配置文件，然后退出：
-
-- Linux/macOS: `~/.pi/telegram/settings.json`
-- Windows: `%USERPROFILE%/.pi/telegram/settings.json`
-
-你需要把 token 改成真实值，然后再次启动。
-
-## 配置文件说明
-
-默认模板示例如下（`language` 会根据系统语言生成；下面以中文环境为例）：
+Example configuration:
 
 ```json
 {
@@ -68,7 +61,7 @@ bun run dev
   ],
   "idleTimeoutMs": 600000,
   "maxResponseLength": 4000,
-  "language": "zh",
+  "language": "en",
   "cron": {
     "enabled": true,
     "defaultTimezone": "Asia/Shanghai",
@@ -81,123 +74,97 @@ bun run dev
 }
 ```
 
-关键字段：
+- `bots`: bot configurations; add more entries to run multiple bots.
+- `bots[].token`: Telegram bot token.
+- `bots[].name`: name used for session and scheduled-task directories.
+- `bots[].allowedUsers`: allowed Telegram user IDs or usernames. An empty list allows everyone.
+- `bots[].cwd`: working directory used by pi.
+- `idleTimeoutMs`: idle time before a chat's pi process is released.
+- `maxResponseLength`: maximum Telegram message length before replies are split.
+- `language`: interface language, `"en"` or `"zh"`. The generated template follows your system locale. If omitted, detection checks `LC_ALL`, `LC_MESSAGES`, `LANG`, and `LANGUAGE`, then the OS locale through `Intl` (including Windows). Chinese locales use Chinese; all others use English.
+- `cron`: scheduled-task settings.
 
-- `bots`: bot 列表，可以配置多个
-- `bots[].token`: Telegram bot token
-- `bots[].name`: bot 名称，用于区分会话目录和任务文件
-- `bots[].allowedUsers`: 允许访问的用户列表，支持用户 id 和用户名
-- `bots[].cwd`: pi 的工作目录
-- `idleTimeoutMs`: 聊天空闲多久后自动回收对应的 pi 进程
-- `maxResponseLength`: 单条回复的最大长度，超出会自动分段发送
-- `language`: 界面语言，`"zh"`（中文）或 `"en"`（English）。留空或不设置时自动检测：系统语言为中文则用中文，否则用英文
-- `cron`: 定时任务相关配置
+## Usage
 
-`allowedUsers` 为空时，不做访问限制。
+Send the bot text, an image, or a document. When you reply to an earlier Telegram message, Pi-Telegram includes that message as context for pi.
 
-## 基本使用
+### Commands
 
-启动后，直接给 bot 发消息即可。
+| Command | Action |
+| --- | --- |
+| `/status` | Show the current chat status |
+| `/new` | Start a new session |
+| `/abort` | Stop the current task |
+| `/abortall` | Stop the current task and clear its queue |
+| `/model` | Open model selection |
+| `/stream` | Switch between streaming and non-streaming output |
+| `/thinking` | Set the thinking level |
+| `/cron` | Open the scheduled-task menu |
 
-支持的输入：
+## Scheduled Tasks
 
-- 文本消息
-- 图片消息
-- 文档消息
-
-如果你在 Telegram 里回复某条历史消息，Pi-Telegram 会把被回复内容一起带给 pi，帮助模型理解上下文。
-
-## 命令
-
-- `/status` 查看当前聊天状态
-- `/new` 新建会话
-- `/abort` 中止当前任务
-- `/abortall` 中止当前任务并清空队列
-- `/model` 打开模型选择菜单
-- `/stream` 切换流式输出或非流式输出
-- `/thinking` 设置思考等级
-- `/cron` 打开定时任务菜单
-
-## 定时任务
-
-### 常用命令
-
-- `/cron list`
-- `/cron stat`
-- `/cron add at <ISO时间> <内容>`
-- `/cron add every <间隔> <内容>`
-- `/cron add cron "<表达式>" [时区] <内容>`
-- `/cron on <id>`
-- `/cron off <id>`
-- `/cron del <id>`
-- `/cron rename <id> <新名称>`
-- `/cron run <id>`
-
-间隔支持 `s`、`m`、`h`、`d`，例如 `30s`、`10m`、`2h`、`1d`。
-
-cron 表达式由 Croner 10 解析，支持秒字段、年份字段、`W`、`+`、`@midnight` 等 OCPS 语法。`?` 是 `*` 的通配符别名，不再表示当前时间字段。
-
-你也可以用 `名称||内容` 这种写法给任务单独命名。
-
-示例：
-
-```bash
-/cron add every 10m 巡检||检查报警并总结
-/cron add at 2026-03-01T09:00:00+08:00 早报||汇总昨日日志
-/cron add cron "0 9 * * 1-5" Asia/Shanghai 工作日早报||汇总日报
+```text
+/cron list
+/cron stat
+/cron add at <ISO time> <prompt>
+/cron add every <interval> <prompt>
+/cron add cron "<expression>" [timezone] <prompt>
+/cron on <id>
+/cron off <id>
+/cron del <id>
+/cron rename <id> <new name>
+/cron run <id>
 ```
 
-## AI 标签
+Intervals support `s`, `m`, `h`, and `d`, for example `30s`, `10m`, `2h`, or `1d`.
 
-Pi-Telegram 会给模型注入三种标签协议。模型需要时会自动输出这些标签。
+Cron expressions are parsed by Croner 10. They may include seconds, years, `W`, `+`, `@midnight`, and other OCPS syntax. `?` is an alias for the `*` wildcard; it does not mean “current time.”
 
-- `tg-reply`: 让回复挂到某条历史消息
-- `tg-attachment`: 发送附件
-- `tg-cron`: 创建和管理定时任务
-
-你一般不需要手动写这些标签，模型会根据场景决定是否使用。
-
-## 数据目录
-
-`~/.pi/telegram` 下的主要目录：
-
-- `settings.json`: 主配置
-- `workspace/`: 默认工作目录
-- `sessions/`: 每个 bot 和聊天的会话数据
-- `cron/`: 定时任务持久化文件
-- `inbound/`: 从 Telegram 下载的图片和文件
-
-## pi --session-dir 说明
-
-Pi-Telegram 启动每个聊天对应的 `pi` 进程时，会固定传入 `--session-dir`。
-
-作用是把该聊天的会话数据落盘，进程重启后还能继续上下文。
-
-目录规则是：
-
-- `~/.pi/telegram/sessions/<bot-name>/bot<token哈希>_chat<chatId>`
-
-简单理解：
-
-- 同一个聊天会一直用同一个 `--session-dir`
-- 不同聊天用不同目录，互不影响
-- 常规自动拉起时会带 `-c`，会从该目录继续会话
-- 你执行 `/new` 后会新建会话，不再沿用旧上下文
-
-一般情况下不需要手动传这个参数，Pi-Telegram 已经自动处理。
-
-### 直接用 pi 查看历史会话
-
-你也可以在终端直接用 `pi` 查看某个聊天的历史会话。
-关键是使用该聊天对应的 `--session-dir`。
+Use `name||prompt` to give a task a separate display name:
 
 ```bash
-pi --session-dir "<会话目录>" -r
+/cron add every 10m Health check||Check alerts and summarize
+/cron add at 2026-03-01T09:00:00+08:00 Morning brief||Summarize yesterday's logs
+/cron add cron "0 9 * * 1-5" Asia/Shanghai Weekday brief||Summarize the daily report
 ```
 
-`-r` 会打开会话列表，你可以选择历史会话继续查看。
+## AI Bridge Tags
 
-常用写法：
+Pi-Telegram gives pi three tag protocols:
 
-- `pi --session-dir "<会话目录>" -c` 继续最近会话
-- `pi --session-dir "<会话目录>" --session <会话文件或会话ID>` 打开指定会话
+- `tg-reply`: reply to a specific Telegram message.
+- `tg-attachment`: send a file or other media.
+- `tg-cron`: create or manage scheduled tasks.
+
+You normally do not write these tags yourself; pi emits them when needed.
+
+## Data and Sessions
+
+Pi-Telegram stores its data under `~/.pi/telegram`:
+
+- `settings.json`: main configuration.
+- `workspace/`: default pi working directory.
+- `sessions/`: session data for each bot and chat.
+- `cron/`: persisted scheduled tasks.
+- `inbound/`: images and files downloaded from Telegram.
+
+Each chat starts pi with a fixed `--session-dir`:
+
+```text
+~/.pi/telegram/sessions/<bot-name>/bot<token-hash>_chat<chatId>
+```
+
+This keeps chats isolated and lets a chat resume after a restart. Normal launches use `-c` to continue the latest session; `/new` starts a fresh one. Pi-Telegram manages these arguments automatically.
+
+To inspect a chat's history directly with pi, use the same directory:
+
+```bash
+pi --session-dir "<session-directory>" -r
+```
+
+`-r` opens the session list. Other useful forms are:
+
+```bash
+pi --session-dir "<session-directory>" -c
+pi --session-dir "<session-directory>" --session <session-file-or-id>
+```
