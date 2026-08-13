@@ -250,7 +250,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
           await ctx.answerCallbackQuery({ text: t("模型列表已刷新") });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          await ctx.answerCallbackQuery({ text: `${t("❌ 刷新失败：")}${msg}`.slice(0, 180) });
+          await ctx.answerCallbackQuery({ text: t("❌ 刷新失败：{message}", { message: msg }).slice(0, 180) });
         }
       }).row();
 
@@ -300,7 +300,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
             await ctx.answerCallbackQuery({ text: t("已刷新") });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            await ctx.answerCallbackQuery({ text: `${t("❌ 刷新失败：")}${msg}`.slice(0, 180) });
+            await ctx.answerCallbackQuery({ text: t("❌ 刷新失败：{message}", { message: msg }).slice(0, 180) });
           }
         }).row();
 
@@ -313,7 +313,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
             const cid = ctx.chat?.id ?? 0;
             const currentKey = activeModelId.get(cid);
             if (currentKey === keyOfModel) {
-              await ctx.answerCallbackQuery({ text: `${t("已是当前模型：")}${mo.name}` });
+              await ctx.answerCallbackQuery({ text: t("已是当前模型：{model}", { model: mo.name }) });
               return;
             }
 
@@ -329,12 +329,12 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
                 ]);
               } catch { /* ignore */ }
             } catch (err) {
-              await ctx.answerCallbackQuery({ text: `❌ ${(err as Error).message}` });
+              await ctx.answerCallbackQuery({ text: t("❌ 错误：{message}", { message: (err as Error).message }) });
               return;
             }
 
             try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
-            await ctx.answerCallbackQuery({ text: `${t("✅ 已切换：")}${mo.name}` });
+            await ctx.answerCallbackQuery({ text: t("✅ 已切换：{model}", { model: mo.name }) });
           }).row();
         }
         range.back(t("⬅️ 返回"), (ctx) => ctx.answerCallbackQuery());
@@ -367,7 +367,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
           await ctx.answerCallbackQuery({ text: t("已切换为流式输出") });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          await ctx.answerCallbackQuery({ text: `${t("❌ 保存失败：")}${msg}`.slice(0, 180) });
+          await ctx.answerCallbackQuery({ text: t("❌ 保存失败：{message}", { message: msg }).slice(0, 180) });
         }
       }).row();
 
@@ -384,7 +384,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
           await ctx.answerCallbackQuery({ text: t("已切换为非流式输出") });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          await ctx.answerCallbackQuery({ text: `${t("❌ 保存失败：")}${msg}`.slice(0, 180) });
+          await ctx.answerCallbackQuery({ text: t("❌ 保存失败：{message}", { message: msg }).slice(0, 180) });
         }
       });
     });
@@ -424,7 +424,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
           await ctx.answerCallbackQuery({ text: t("思考状态已刷新") });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          await ctx.answerCallbackQuery({ text: `${t("❌ 刷新失败：")}${msg}`.slice(0, 180) });
+          await ctx.answerCallbackQuery({ text: t("❌ 刷新失败：{message}", { message: msg }).slice(0, 180) });
         }
       }).row();
 
@@ -434,7 +434,7 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
           const cid = ctx.chat?.id ?? 0;
           const now = activeThinkingLevel.get(cid) ?? "";
           if (now === level) {
-            await ctx.answerCallbackQuery({ text: `${t("当前已是 ")}${thinkingLabel(level)}` });
+            await ctx.answerCallbackQuery({ text: t("当前已是 {level}", { level: thinkingLabel(level) }) });
             return;
           }
 
@@ -443,9 +443,9 @@ export function createBotMenus<C extends Context>(opts: CreateBotMenusOptions): 
             await inst.setThinkingLevel(level);
             activeThinkingLevel.set(cid, level);
             try { ctx.menu.update(); } catch { /* ignore idempotent menu update */ }
-            await ctx.answerCallbackQuery({ text: `${t("✅ 已切换为 ")}${thinkingLabel(level)}` });
+            await ctx.answerCallbackQuery({ text: t("✅ 已切换为 {level}", { level: thinkingLabel(level) }) });
           } catch (err) {
-            await ctx.answerCallbackQuery({ text: `❌ ${(err as Error).message}` });
+            await ctx.answerCallbackQuery({ text: t("❌ 错误：{message}", { message: (err as Error).message }) });
           }
         });
 

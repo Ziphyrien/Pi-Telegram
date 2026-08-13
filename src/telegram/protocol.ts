@@ -81,7 +81,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
 
     if (url) {
       if (!isValidHttpUrl(url)) {
-        warnings.push(`${t("附件 ")}${label}${t(" 的 URL 非法")}`);
+        warnings.push(t("附件 {label} 的 URL 非法", { label }));
         continue;
       }
       try {
@@ -90,31 +90,31 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
           : new InputFile(new URL(url));
         attachments.push({ kind, media, label });
       } catch {
-        warnings.push(`${t("附件 ")}${label}${t(" 的 URL 解析失败")}`);
+        warnings.push(t("附件 {label} 的 URL 解析失败", { label }));
       }
       continue;
     }
 
     if (localPath) {
       if (!existsSync(localPath)) {
-        warnings.push(`${t("附件 ")}${label}${t(" 的本地路径不存在")}`);
+        warnings.push(t("附件 {label} 的本地路径不存在", { label }));
         continue;
       }
       let size = 0;
       try {
         const st = statSync(localPath);
         if (!st.isFile()) {
-          warnings.push(`${t("附件 ")}${label}${t(" 的本地路径不是文件")}`);
+          warnings.push(t("附件 {label} 的本地路径不是文件", { label }));
           continue;
         }
         size = st.size;
       } catch {
-        warnings.push(`${t("附件 ")}${label}${t(" 的本地路径无法读取")}`);
+        warnings.push(t("附件 {label} 的本地路径无法读取", { label }));
         continue;
       }
 
       if (size > MAX_UPLOAD_BYTES) {
-        warnings.push(`${t("附件 ")}${label}${t(" 超过大小限制（>")}${MAX_UPLOAD_BYTES}${t(" bytes）")}`);
+        warnings.push(t("附件 {label} 超过大小限制（>{maxBytes} bytes）", { label, maxBytes: MAX_UPLOAD_BYTES }));
         continue;
       }
 
@@ -134,7 +134,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
         data = Buffer.from(normalized, "base64");
         if (!data.length) throw new Error("decoded bytes is empty");
       } catch (err) {
-        warnings.push(`${t("附件 ")}${label}${t(" 解析失败：")}${(err as Error).message}`);
+        warnings.push(t("附件 {label} 解析失败：{message}", { label, message: (err as Error).message }));
         continue;
       }
     } else {
@@ -142,7 +142,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
     }
 
     if (data.byteLength > MAX_UPLOAD_BYTES) {
-      warnings.push(`${t("附件 ")}${label}${t(" 超过大小限制（>")}${MAX_UPLOAD_BYTES}${t(" bytes）")}`);
+      warnings.push(t("附件 {label} 超过大小限制（>{maxBytes} bytes）", { label, maxBytes: MAX_UPLOAD_BYTES }));
       continue;
     }
 
@@ -565,7 +565,7 @@ function buildCronDirective(
   const actionRaw = attrs.action || attrs.op || attrs.cmd || attrs.type || "";
   const action = normalizeAction(actionRaw);
   if (!action) {
-    warnings.push(`${t("tg-cron 缺少或不支持 action: ")}${actionRaw || "(empty)"}`);
+    warnings.push(t("tg-cron 缺少或不支持 action: {action}", { action: actionRaw || "(empty)" }));
     return undefined;
   }
 
@@ -576,7 +576,7 @@ function buildCronDirective(
   const id = String(attrs.id || attrs.job_id || attrs.jobid || "").trim();
   if (action === "on" || action === "off" || action === "del" || action === "run") {
     if (!id) {
-      warnings.push(`tg-cron action=${action}${t(" 缺少 id")}`);
+      warnings.push(t("tg-cron action={action} 缺少 id", { action }));
       return undefined;
     }
     return { action, id };
@@ -600,7 +600,7 @@ function buildCronDirective(
   const kindRaw = attrs.kind || attrs.schedule || "";
   const kind = normalizeKind(kindRaw);
   if (!kind) {
-    warnings.push(`${t("tg-cron add 缺少或不支持 kind: ")}${kindRaw || "(empty)"}`);
+    warnings.push(t("tg-cron add 缺少或不支持 kind: {kind}", { kind: kindRaw || "(empty)" }));
     return undefined;
   }
 

@@ -150,7 +150,7 @@ export class Scheduler {
 
       const perChatCount = [...this.jobs.values()].filter((x) => x.chatId === chatId).length;
       if (perChatCount >= this.opts.maxJobsPerChat) {
-        throw new Error(`${t("当前聊天任务已达上限（")}${this.opts.maxJobsPerChat}${t("）")}`);
+        throw new Error(t("当前聊天任务已达上限（{limit}）", { limit: this.opts.maxJobsPerChat }));
       }
 
       const now = Date.now();
@@ -278,7 +278,7 @@ export class Scheduler {
         if (!job) continue;
         this.jobs.set(job.id, job);
       } catch (err) {
-        log.warn(`${t("cron 跳过非法任务：")}${toErrorMessage(err)}`);
+        log.warn(t("cron 跳过非法任务：{message}", { message: toErrorMessage(err) }));
       }
     }
   }
@@ -358,7 +358,7 @@ export class Scheduler {
       } catch (err) {
         job.enabled = false;
         job.state.lastStatus = "error";
-        job.state.lastError = `${t("cron 表达式无效：")}${toErrorMessage(err)}`;
+        job.state.lastError = t("cron 表达式无效：{message}", { message: toErrorMessage(err) });
         job.state.nextRunAtMs = 0;
       }
       return;
@@ -613,7 +613,7 @@ export class Scheduler {
 
     const timeoutMs = this.opts.executorTimeoutMs ?? Math.max(5_000, this.opts.maxRunMs);
 
-    const timeoutError = `${t("任务执行超时（>")}${Math.round(timeoutMs / 1000)}${t("s）")}`;
+    const timeoutError = t("任务执行超时（>{seconds}s）", { seconds: Math.round(timeoutMs / 1000) });
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -713,7 +713,7 @@ function normalizeSchedule(schedule: CronSchedule, defaultTimezone: string, now:
     }
 
     default:
-      throw new Error(`${t("未知 schedule.kind: ")}${(schedule as any)?.kind}`);
+      throw new Error(t("未知 schedule.kind: {kind}", { kind: (schedule as any)?.kind }));
   }
 }
 
@@ -832,7 +832,7 @@ function normalizeJobName(nameInput: unknown, prompt: string, id: string): strin
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (!normalized) return `${t("任务-")}${id}`;
+  if (!normalized) return t("任务-{id}", { id });
   if (normalized.length <= 48) return normalized;
   return `${normalized.slice(0, 48)}…`;
 }
@@ -843,13 +843,13 @@ function deriveNameFromPrompt(prompt: string, id: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  if (!p) return `${t("任务-")}${id}`;
+  if (!p) return t("任务-{id}", { id });
 
   const keyword = p
     .replace(/^(["'“”‘’\-•\s]+)/, "")
     .trim();
 
-  if (!keyword) return `${t("任务-")}${id}`;
+  if (!keyword) return t("任务-{id}", { id });
   if (keyword.length <= 24) return keyword;
   return `${keyword.slice(0, 24)}…`;
 }

@@ -328,8 +328,8 @@ async function sendAttachments(
 ): Promise<void> {
   if (warnings.length) {
     const preview = warnings.slice(0, 3).join("\n");
-    const more = warnings.length > 3 ? `${t("\n... 还有 ")}${warnings.length - 3}${t(" 条")}` : "";
-    await context.reply(`${t("⚠️ 附件解析告警：\n")}${preview}${more}`).catch(() => undefined);
+    const more = warnings.length > 3 ? t("\n... 还有 {count} 条", { count: warnings.length - 3 }) : "";
+    await context.reply(t("⚠️ 附件解析告警：\n{preview}{more}", { preview, more })).catch(() => undefined);
   }
 
   let first = true;
@@ -338,7 +338,10 @@ async function sendAttachments(
       const other = first && replyParameters ? { reply_parameters: replyParameters } : undefined;
       await sendOneAttachment(context, attachment, other);
     } catch (error) {
-      await context.reply(`${t("❌ 附件发送失败：")}${attachment.label || t("未知附件")}\n${(error as Error).message}`).catch(() => undefined);
+      await context.reply(t("❌ 附件发送失败：{label}\n{message}", {
+        label: attachment.label || t("未知附件"),
+        message: (error as Error).message,
+      })).catch(() => undefined);
     }
     first = false;
   }
@@ -542,7 +545,10 @@ export function formatCompactDuration(milliseconds: number): string {
 export function formatCronSchedule(schedule: CronSchedule): string {
   switch (schedule.kind) {
     case "at": return `at ${formatDateTime(schedule.atMs)}`;
-    case "every": return `every ${formatCompactDuration(schedule.everyMs)}${t("（anchor=")}${formatDateTime(schedule.anchorMs)}${t("）")}`;
+    case "every": return t("every {duration}（anchor={anchor}）", {
+      duration: formatCompactDuration(schedule.everyMs),
+      anchor: formatDateTime(schedule.anchorMs),
+    });
     case "cron": return `cron "${schedule.expr}" @${schedule.timezone}`;
     default: return "unknown";
   }
@@ -564,12 +570,12 @@ export function formatCronJobLine(job: CronJobRecord): string {
 
 export function formatCronStatus(status: SchedulerStatus): string {
   return [
-    `${t("⏰ 定时服务：")}${status.enabled ? t("开启") : t("关闭")}`,
-    `${t("总任务：")}${status.totalJobs}`,
-    `${t("启用：")}${status.enabledJobs}`,
-    `${t("运行中：")}${status.runningJobs}`,
-    `${t("队列中：")}${status.queuedJobs}`,
-    `${t("最近下次触发：")}${formatDateTime(status.nextRunAtMs)}`,
+    t("⏰ 定时服务：{state}", { state: status.enabled ? t("开启") : t("关闭") }),
+    t("总任务：{count}", { count: status.totalJobs }),
+    t("启用：{count}", { count: status.enabledJobs }),
+    t("运行中：{count}", { count: status.runningJobs }),
+    t("队列中：{count}", { count: status.queuedJobs }),
+    t("最近下次触发：{time}", { time: formatDateTime(status.nextRunAtMs) }),
   ].join("\n");
 }
 
@@ -612,21 +618,25 @@ export function formatContextUsage(
     percent = ` (${usage.percent.toFixed(precision)}%)`;
   }
 
-  return `${t("📦 上下文占用: ")}${used} / ${total}${percent}`;
+  return t("📦 上下文占用: {used} / {total}{percent}", { used, total, percent });
 }
 
 export function buildStatusLines(snapshot: BotStatusSnapshot): string[] {
   const lines: Array<string | undefined> = [
     `${snapshot.alive ? t("✅ 运行中") : t("💤 未启动")} | ${snapshot.processing ? t("⏳ 处理中") : t("🟢 空闲")}`,
-    snapshot.providerLabel ? `${t("🏢 供应商: ")}${snapshot.providerLabel}` : undefined,
-    `${t("🤖 模型: ")}${snapshot.modelLabel}`,
-    `${t("⚙️ 输出: ")}${snapshot.streamEnabled ? t("流式") : t("非流式")}`,
-    snapshot.thinkingLabel ? `${t("🧠 思考: ")}${snapshot.thinkingLabel}` : undefined,
-    snapshot.sessionLabel ? `${t("🗂 会话: ")}${snapshot.sessionLabel}` : undefined,
-    typeof snapshot.cost === "number" && snapshot.cost > 0 ? `${t("💰 花费: $")}${formatCost(snapshot.cost)}` : undefined,
+    snapshot.providerLabel ? t("🏢 供应商: {provider}", { provider: snapshot.providerLabel }) : undefined,
+    t("🤖 模型: {model}", { model: snapshot.modelLabel }),
+    t("⚙️ 输出: {mode}", { mode: snapshot.streamEnabled ? t("流式") : t("非流式") }),
+    snapshot.thinkingLabel ? t("🧠 思考: {level}", { level: snapshot.thinkingLabel }) : undefined,
+    snapshot.sessionLabel ? t("🗂 会话: {session}", { session: snapshot.sessionLabel }) : undefined,
+    typeof snapshot.cost === "number" && snapshot.cost > 0 ? t("💰 花费: ${cost}", { cost: formatCost(snapshot.cost) }) : undefined,
     formatContextUsage(snapshot.contextUsage),
-    `${t("📊 活跃: ")}${snapshot.activeCount}`,
-    `${t("⏰ 定时: ")}${snapshot.cron.enabled ? t("开启") : t("关闭")}${t(" | 任务 ")}${snapshot.cron.totalJobs}${t("（启用 ")}${snapshot.cron.enabledJobs}${t("）")}`,
+    t("📊 活跃: {count}", { count: snapshot.activeCount }),
+    t("⏰ 定时: {state} | 任务 {total}（启用 {enabled}）", {
+      state: snapshot.cron.enabled ? t("开启") : t("关闭"),
+      total: snapshot.cron.totalJobs,
+      enabled: snapshot.cron.enabledJobs,
+    }),
   ];
 
   return lines.filter((line): line is string => Boolean(line));
@@ -648,7 +658,11 @@ export class AiToolRegistry {
 
   renderInstructions(): string {
     if (!this.tools.length) return "";
-    const blocks = this.tools.map((tool, i) => `${t("# 工具 ")}${i + 1}: ${tool.name}\n${tool.instructions}`);
+    const blocks = this.tools.map((tool, index) => t("# 工具 {index}: {name}\n{instructions}", {
+      index: index + 1,
+      name: tool.name,
+      instructions: tool.instructions,
+    }));
     return [
       t("你可以使用以下桥接工具协议。仅当确实需要时使用。"),
       ...blocks,

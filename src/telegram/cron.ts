@@ -68,8 +68,8 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
 
     if (prepared.warnings.length) {
       const preview = prepared.warnings.slice(0, 3).join("\n");
-      const more = prepared.warnings.length > 3 ? `${t("\n... 还有 ")}${prepared.warnings.length - 3}${t(" 条")}` : "";
-      await bot.api.sendMessage(chatId, `${t("⚠️ 附件解析告警：\n")}${preview}${more}`).catch(() => {});
+      const more = prepared.warnings.length > 3 ? t("\n... 还有 {count} 条", { count: prepared.warnings.length - 3 }) : "";
+      await bot.api.sendMessage(chatId, t("⚠️ 附件解析告警：\n{preview}{more}", { preview, more })).catch(() => {});
     }
 
     if (prepared.body.trim()) {
@@ -83,7 +83,10 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       try {
         await sendAttachmentByApi(bot.api, chatId, attachment);
       } catch (err) {
-        await bot.api.sendMessage(chatId, `${t("❌ 附件发送失败：")}${attachment.label || t("未知附件")}\n${(err as Error).message}`).catch(() => {});
+        await bot.api.sendMessage(chatId, t("❌ 附件发送失败：{label}\n{message}", {
+          label: attachment.label || t("未知附件"),
+          message: (err as Error).message,
+        })).catch(() => {});
       }
     }
   };
@@ -100,7 +103,10 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       const message = err instanceof Error ? err.message : String(err);
       await bot.api.sendMessage(
         job.chatId,
-        `${t("❌ 定时任务「")}${job.name || job.id}${t("」执行失败：")}${truncate(message, 1500)}`,
+        t("❌ 定时任务「{name}」执行失败：{message}", {
+          name: job.name || job.id,
+          message: truncate(message, 1500),
+        }),
       ).catch(() => {});
       return { ok: false, error: message };
     }
@@ -118,9 +124,9 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
   const buildCronMenuTitle = (chatId: number): string => {
     const pending = cronPendingInput.get(chatId);
     const hint = pending
-      ? `${t("\n当前等待输入：")}${pending.kind}${t("（请直接发送文本，或在菜单中取消）")}`
+      ? t("\n当前等待输入：{kind}（请直接发送文本，或在菜单中取消）", { kind: pending.kind })
       : "";
-    return `${t("⏰ 定时任务菜单")}${hint}`;
+    return t("⏰ 定时任务菜单{hint}", { hint });
   };
 
   const setCronMenuPage = (chatId: number, page: number, totalPages: number): number => {
@@ -144,7 +150,10 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       } catch (err) {
         if (isMessageNotModifiedError(err)) return;
         cronMenuMessageByChat.delete(chatId);
-        log.warn(`chat${chatId}${t(" 更新 /cron 菜单失败，将尝试重新发送：")}${describeTelegramSendError(err)}`);
+        log.warn(t("chat{chatId} 更新 /cron 菜单失败，将尝试重新发送：{message}", {
+          chatId,
+          message: describeTelegramSendError(err),
+        }));
       }
     }
 
@@ -190,7 +199,12 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
     const pageJobs = jobs.slice(start, start + CRON_MENU_PAGE_SIZE);
 
     range.text(
-      `📊 ${st.enabled ? t("开启") : t("关闭")}${t(" | 任务 ")}${st.totalJobs}${t(" | 运行 ")}${st.runningJobs}${t(" | 队列 ")}${st.queuedJobs}`,
+      t("📊 {state} | 任务 {total} | 运行 {running} | 队列 {queued}", {
+        state: st.enabled ? t("开启") : t("关闭"),
+        total: st.totalJobs,
+        running: st.runningJobs,
+        queued: st.queuedJobs,
+      }),
       (ctx) => ctx.answerCallbackQuery({ text: t("状态已更新") }),
     ).row();
 
@@ -222,7 +236,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
 
     if (pending) {
       const ageSec = Math.max(0, Math.floor((Date.now() - pending.startedAt) / 1000));
-      range.text(`${t("❌ 取消输入（")}${pending.kind}, ${ageSec}${t("s）")}`, async (ctx) => {
+      range.text(t("❌ 取消输入（{kind}, {seconds}s）", { kind: pending.kind, seconds: ageSec }), async (ctx) => {
         cronPendingInput.delete(chatId);
         try { ctx.menu.update(); } catch { /* ignore */ }
         await ctx.answerCallbackQuery({ text: t("已取消") });
@@ -234,8 +248,8 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       return;
     }
 
-    range.text(`${t("📄 第 ")}${page + 1}/${totalPages}${t(" 页")}`, (ctx) =>
-      ctx.answerCallbackQuery({ text: `${t("本页 ")}${pageJobs.length}${t(" 条")}` }),
+    range.text(t("📄 第 {page}/{total} 页", { page: page + 1, total: totalPages }), (ctx) =>
+      ctx.answerCallbackQuery({ text: t("本页 {count} 条", { count: pageJobs.length }) }),
     ).row();
 
     for (const job of pageJobs) {
@@ -261,7 +275,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         cronPendingInput.set(chatId, { kind: "rename", jobId: job.id, startedAt: Date.now() });
         try { ctx.menu.update(); } catch { /* ignore */ }
         await ctx.answerCallbackQuery({ text: t("请发送新名称") });
-        await ctx.reply(`${t("✏️ 请发送任务 ")}${job.id}${t(" 的新名称")}`);
+        await ctx.reply(t("✏️ 请发送任务 {id} 的新名称", { id: job.id }));
       }).row();
 
       range.text(t("🗑 删除"), async (ctx) => {
@@ -277,13 +291,13 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       range.text(t("⬅️ 上一页"), async (ctx) => {
         setCronMenuPage(chatId, page - 1, totalPages);
         try { ctx.menu.update(); } catch { /* ignore */ }
-        await ctx.answerCallbackQuery({ text: `${t("第 ")}${Math.max(1, page)}${t(" 页")}` });
+        await ctx.answerCallbackQuery({ text: t("第 {page} 页", { page: Math.max(1, page) }) });
       });
 
       range.text(t("➡️ 下一页"), async (ctx) => {
         setCronMenuPage(chatId, page + 1, totalPages);
         try { ctx.menu.update(); } catch { /* ignore */ }
-        await ctx.answerCallbackQuery({ text: `${t("第 ")}${Math.min(totalPages, page + 2)}${t(" 页")}` });
+        await ctx.answerCallbackQuery({ text: t("第 {page} 页", { page: Math.min(totalPages, page + 2) }) });
       }).row();
     }
   });
@@ -320,7 +334,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       }
 
       const lines = jobs.map((job) => formatCronJobLine(job));
-      const text = `${t("⏰ 定时任务（")}${jobs.length}${t("）\n")}${lines.join("\n")}`;
+      const text = t("⏰ 定时任务（{count}）\n{jobs}", { count: jobs.length, jobs: lines.join("\n") });
       for (const part of splitMessage(text, maxResponseLength)) {
         await context.reply(part);
       }
@@ -361,7 +375,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           prompt,
           schedule: { kind: "at", atMs },
         });
-        await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+        await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
         return;
       }
 
@@ -381,7 +399,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           prompt,
           schedule: { kind: "every", everyMs, anchorMs: Date.now() },
         });
-        await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+        await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
         return;
       }
 
@@ -411,7 +433,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           schedule: { kind: "cron", expr, timezone },
         });
 
-        await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+        await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
         return;
       }
 
@@ -430,7 +456,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         await context.reply(t("未找到该任务（或不属于当前聊天）"));
         return;
       }
-      await context.reply(`${t("✅ 任务 ")}${id}${t(" 已")}${sub === "on" ? t("启用") : t("停用")}`);
+      await context.reply(t("✅ 任务 {id} 已{state}", { id, state: sub === "on" ? t("启用") : t("停用") }));
       return;
     }
 
@@ -446,7 +472,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         return;
       }
       await cron.remove(id);
-      await context.reply(`${t("🗑 已删除任务 ")}${id}`);
+      await context.reply(t("🗑 已删除任务 {id}", { id }));
       return;
     }
 
@@ -467,7 +493,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         await context.reply(t("重命名失败"));
         return;
       }
-      await context.reply(`${t("✏️ 任务 ")}${id}${t(" 已重命名为：")}${updated.name}`);
+      await context.reply(t("✏️ 任务 {id} 已重命名为：{name}", { id, name: updated.name }));
       return;
     }
 
@@ -483,14 +509,14 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         return;
       }
       const ok = await cron.runNow(id);
-      await context.reply(ok ? `${t("▶️ 任务 ")}${id}${t(" 已加入执行队列")}` : t("加入队列失败"));
+      await context.reply(ok ? t("▶️ 任务 {id} 已加入执行队列", { id }) : t("加入队列失败"));
       return;
     }
 
       await context.reply(t("未知子命令。发送 /cron help 查看用法。"));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await context.reply(`${t("❌ cron 操作失败：")}${truncate(message, 1000)}`).catch(() => {});
+      await context.reply(t("❌ cron 操作失败：{message}", { message: truncate(message, 1000) })).catch(() => {});
     }
   });
 
@@ -517,7 +543,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           notices.push(t("⏰ 当前聊天暂无定时任务。"));
           break;
         }
-        notices.push(`${t("⏰ 定时任务（")}${jobs.length}${t("）\n")}${jobs.map((x) => formatCronJobLine(x)).join("\n")}`);
+        notices.push(t("⏰ 定时任务（{count}）\n{jobs}", { count: jobs.length, jobs: jobs.map((x) => formatCronJobLine(x)).join("\n") }));
         break;
       }
 
@@ -555,7 +581,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           const tzRaw = String(directive.timezone || "").trim();
           const timezone = tzRaw || cron.getDefaultTimezone();
           if (!looksLikeTimezone(timezone)) {
-            throw new Error(`${t("timezone 非法：")}${timezone}`);
+            throw new Error(t("timezone 非法：{timezone}", { timezone }));
           }
           schedule = { kind: "cron", expr, timezone };
         }
@@ -567,7 +593,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           schedule,
         });
 
-        notices.push(`${t("✅ 已创建任务 ")}${created.id}\n${formatCronSchedule(created.schedule)}${t("\n名称：")}${created.name}`);
+        notices.push(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: created.id,
+          schedule: formatCronSchedule(created.schedule),
+          name: created.name,
+        }));
         break;
       }
 
@@ -576,7 +606,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         if (!id) throw new Error(t("on 缺少 id"));
         ensureOwned(id);
         await cron.setEnabled(id, true);
-        notices.push(`${t("✅ 任务 ")}${id}${t(" 已启用")}`);
+        notices.push(t("✅ 任务 {id} 已启用", { id }));
         break;
       }
 
@@ -585,7 +615,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         if (!id) throw new Error(t("off 缺少 id"));
         ensureOwned(id);
         await cron.setEnabled(id, false);
-        notices.push(`${t("✅ 任务 ")}${id}${t(" 已停用")}`);
+        notices.push(t("✅ 任务 {id} 已停用", { id }));
         break;
       }
 
@@ -594,7 +624,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         if (!id) throw new Error(t("del 缺少 id"));
         ensureOwned(id);
         await cron.remove(id);
-        notices.push(`${t("🗑 已删除任务 ")}${id}`);
+        notices.push(t("🗑 已删除任务 {id}", { id }));
         break;
       }
 
@@ -609,7 +639,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         const updated = await cron.rename(id, newName);
         if (!updated) throw new Error(t("rename 失败"));
 
-        notices.push(`${t("✏️ 任务 ")}${id}${t(" 已重命名为：")}${updated.name}`);
+        notices.push(t("✏️ 任务 {id} 已重命名为：{name}", { id, name: updated.name }));
         break;
       }
 
@@ -618,12 +648,12 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         if (!id) throw new Error(t("run 缺少 id"));
         ensureOwned(id);
         const ok = await cron.runNow(id);
-        notices.push(ok ? `${t("▶️ 任务 ")}${id}${t(" 已加入执行队列")}` : `${t("❌ 任务 ")}${id}${t(" 加入队列失败")}`);
+        notices.push(ok ? t("▶️ 任务 {id} 已加入执行队列", { id }) : t("❌ 任务 {id} 加入队列失败", { id }));
         break;
       }
 
       default:
-        warnings.push(`${t("不支持的 tg-cron action: ")}${(directive as any).action}`);
+        warnings.push(t("不支持的 tg-cron action: {action}", { action: (directive as any).action }));
         break;
     }
 
@@ -646,7 +676,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
         warnings.push(...res.warnings);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        warnings.push(`tg-cron(${directive.action}${t(") 执行失败：")}${message}`);
+        warnings.push(t("tg-cron({action}) 执行失败：{message}", { action: directive.action, message }));
       }
     }
 
@@ -680,7 +710,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
           return true;
         }
 
-        await context.reply(`${t("✏️ 任务 ")}${updated.id}${t(" 已重命名为：")}${updated.name}`);
+        await context.reply(t("✏️ 任务 {id} 已重命名为：{name}", { id: updated.id, name: updated.name }));
         return true;
       }
 
@@ -710,7 +740,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
 
         cronPendingInput.delete(chatId);
         await upsertCronMenuMessage(context);
-        await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+        await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
         return true;
       }
 
@@ -740,7 +774,11 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
 
         cronPendingInput.delete(chatId);
         await upsertCronMenuMessage(context);
-        await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+        await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
         return true;
       }
 
@@ -777,7 +815,7 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
       }
 
       if (!looksLikeTimezone(timezone)) {
-        await context.reply(`${t("❌ 时区格式非法：")}${timezone}`);
+        await context.reply(t("❌ 时区格式非法：{timezone}", { timezone }));
         return true;
       }
 
@@ -790,11 +828,15 @@ export function createCronFeatures(options: CronFeatureOptions): CronFeatures {
 
       cronPendingInput.delete(chatId);
       await upsertCronMenuMessage(context);
-      await context.reply(`${t("✅ 已创建任务 ")}${job.id}\n${formatCronSchedule(job.schedule)}${t("\n名称：")}${job.name}`);
+      await context.reply(t("✅ 已创建任务 {id}\n{schedule}\n名称：{name}", {
+          id: job.id,
+          schedule: formatCronSchedule(job.schedule),
+          name: job.name,
+        }));
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await context.reply(`${t("❌ 创建任务失败：")}${truncate(message, 800)}${t("\n可继续输入，或打开 /cron 菜单取消")}`).catch(() => {});
+      await context.reply(t("❌ 创建任务失败：{message}\n可继续输入，或打开 /cron 菜单取消", { message: truncate(message, 800) })).catch(() => {});
       return true;
     }
   };

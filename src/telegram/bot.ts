@@ -285,7 +285,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
       await context.reply(t("🆕 已新建会话"));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await context.reply(`${t("❌ 新建会话失败：")}${truncate(message, 1000)}`);
+      await context.reply(t("❌ 新建会话失败：{message}", { message: truncate(message, 1000) }));
     }
   });
 
@@ -307,13 +307,13 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
 
     if (stopped.aborted) {
       if (queued > 0) {
-        await context.reply(`${t("📥 队列保留 ")}${queued}${t(" 条，继续执行中\n如需清空队列可用 /abortall")}`);
+        await context.reply(t("📥 队列保留 {count} 条，继续执行中\n如需清空队列可用 /abortall", { count: queued }));
       }
       return;
     }
 
     if (queued > 0) {
-      await context.reply(`${t("当前无运行任务，队列中还有 ")}${queued}${t(" 条")}`);
+      await context.reply(t("当前无运行任务，队列中还有 {count} 条", { count: queued }));
       return;
     }
 
@@ -337,7 +337,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     });
 
     if (cleared > 0) {
-      await context.reply(`${t("🧹 已清空队列 ")}${cleared}${t(" 条")}`);
+      await context.reply(t("🧹 已清空队列 {count} 条", { count: cleared }));
       return;
     }
 
@@ -353,7 +353,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     try {
       await menus.refreshModelsForChat(chatId);
     } catch (err) {
-      await context.reply(`${t("❌ 获取模型列表失败：")}${(err as Error).message}`);
+      await context.reply(t("❌ 获取模型列表失败：{message}", { message: (err as Error).message }));
       return;
     }
 
@@ -474,7 +474,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
     const useDraftStream = useStream && shouldUseDraftStreaming(context);
 
     const initialStatus = ahead > 0
-      ? `${t("⏳ 排队中（前方 ")}${ahead}${t(" 条）...")}`
+      ? t("⏳ 排队中（前方 {count} 条）...", { count: ahead })
       : t("⏳ 思考中...");
     const status = !useStream
       ? await context.reply(initialStatus)
@@ -504,7 +504,10 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
             getMessageThreadId(context),
             maxResponseLength,
             (err) => {
-              log.warn(`chat${chatId}${t(" sendRichMessageDraft 预览失败，已停用本次流式预览：")}${describeTelegramSendError(err)}`);
+              log.warn(t("chat{chatId} sendRichMessageDraft 预览失败，已停用本次流式预览：{message}", {
+                chatId,
+                message: describeTelegramSendError(err),
+              }));
             },
           )
           : createSilentStreamUpdater();
@@ -573,7 +576,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
           await context.reply(t("🛑 已中止")).catch(() => {});
         }
       } else if (useStream && streamedText.trim()) {
-        const errLine = `${t("⚠️ 生成中断：")}${truncate(message, 300)}`;
+        const errLine = t("⚠️ 生成中断：{message}", { message: truncate(message, 300) });
         const merged = truncate(`${streamedText}\n\n${errLine}`, maxResponseLength);
         if (status) {
           await reportStatusOrReply(context, status, merged);
@@ -581,7 +584,7 @@ export function createBot(opts: CreateBotOptions): Bot<BotContext> {
           await context.reply(merged).catch(() => {});
         }
       } else {
-        const errorText = `${t("❌ 错误：")}${message}`;
+        const errorText = t("❌ 错误：{message}", { message });
         if (status) {
           await reportStatusOrReply(context, status, errorText);
         } else {

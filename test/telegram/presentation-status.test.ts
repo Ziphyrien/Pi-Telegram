@@ -1,8 +1,11 @@
-import { describe, test } from "bun:test";
+import { afterEach, describe, test } from "bun:test";
 import assert from "node:assert/strict";
-import { buildStatusLines, formatContextUsage, formatCost } from "../../src/telegram/presentation.js";
+import { setLanguage } from "../../src/i18n.js";
+import { buildStatusLines, formatContextUsage, formatCost, formatCronStatus } from "../../src/telegram/presentation.js";
 
 // @covers telegram/status.ts
+
+afterEach(() => setLanguage("zh"));
 
 describe("telegram status formatting", () => {
   test("formats costs with precision based on magnitude", () => {
@@ -51,6 +54,40 @@ describe("telegram status formatting", () => {
       "📊 活跃: 2",
       "⏰ 定时: 开启 | 任务 3（启用 2）",
     ]);
+  });
+
+  test("renders status and cron summaries in English", () => {
+    setLanguage("en");
+
+    assert.deepEqual(buildStatusLines({
+      alive: true,
+      processing: false,
+      providerLabel: "openai",
+      modelLabel: "gpt-test",
+      streamEnabled: true,
+      thinkingLabel: "medium",
+      sessionLabel: "abc123",
+      cost: 0.01234,
+      contextUsage: { tokens: 100, contextWindow: 1000, percent: 10 },
+      activeCount: 2,
+      cron: { enabled: true, totalJobs: 3, enabledJobs: 2 },
+    }), [
+      "✅ Running | 🟢 Idle",
+      "🏢 Provider: openai",
+      "🤖 Model: gpt-test",
+      "⚙️ Output: Streaming",
+      "🧠 Thinking: medium",
+      "🗂 Session: abc123",
+      "💰 Cost: $0.012",
+      "📦 Context usage: 100 / 1,000 (10%)",
+      "📊 Active: 2",
+      "⏰ Cron: On | tasks 3 (enabled 2)",
+    ]);
+
+    assert.equal(
+      formatCronStatus({ enabled: false, totalJobs: 0, enabledJobs: 0, runningJobs: 0, queuedJobs: 0 }),
+      "⏰ Cron service: Off\nTotal tasks: 0\nEnabled: 0\nRunning: 0\nQueued: 0\nNext run: -",
+    );
   });
 
   test("builds minimal offline status", () => {
