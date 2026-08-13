@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { InputFile } from "grammy";
 import type { ReplyParameters } from "@grammyjs/types";
+import { t } from "../i18n.js";
 
 export type TgAttachmentKind =
   | "photo"
@@ -80,7 +81,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
 
     if (url) {
       if (!isValidHttpUrl(url)) {
-        warnings.push(`附件 ${label} 的 URL 非法`);
+        warnings.push(t("附件 {label} 的 URL 非法", { label }));
         continue;
       }
       try {
@@ -89,31 +90,31 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
           : new InputFile(new URL(url));
         attachments.push({ kind, media, label });
       } catch {
-        warnings.push(`附件 ${label} 的 URL 解析失败`);
+        warnings.push(t("附件 {label} 的 URL 解析失败", { label }));
       }
       continue;
     }
 
     if (localPath) {
       if (!existsSync(localPath)) {
-        warnings.push(`附件 ${label} 的本地路径不存在`);
+        warnings.push(t("附件 {label} 的本地路径不存在", { label }));
         continue;
       }
       let size = 0;
       try {
         const st = statSync(localPath);
         if (!st.isFile()) {
-          warnings.push(`附件 ${label} 的本地路径不是文件`);
+          warnings.push(t("附件 {label} 的本地路径不是文件", { label }));
           continue;
         }
         size = st.size;
       } catch {
-        warnings.push(`附件 ${label} 的本地路径无法读取`);
+        warnings.push(t("附件 {label} 的本地路径无法读取", { label }));
         continue;
       }
 
       if (size > MAX_UPLOAD_BYTES) {
-        warnings.push(`附件 ${label} 超过大小限制（>${MAX_UPLOAD_BYTES} bytes）`);
+        warnings.push(t("附件 {label} 超过大小限制（>{maxBytes} bytes）", { label, maxBytes: MAX_UPLOAD_BYTES }));
         continue;
       }
 
@@ -133,7 +134,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
         data = Buffer.from(normalized, "base64");
         if (!data.length) throw new Error("decoded bytes is empty");
       } catch (err) {
-        warnings.push(`附件 ${label} 解析失败：${(err as Error).message}`);
+        warnings.push(t("附件 {label} 解析失败：{message}", { label, message: (err as Error).message }));
         continue;
       }
     } else {
@@ -141,7 +142,7 @@ export function extractTgAttachments(input: string): AttachmentExtraction {
     }
 
     if (data.byteLength > MAX_UPLOAD_BYTES) {
-      warnings.push(`附件 ${label} 超过大小限制（>${MAX_UPLOAD_BYTES} bytes）`);
+      warnings.push(t("附件 {label} 超过大小限制（>{maxBytes} bytes）", { label, maxBytes: MAX_UPLOAD_BYTES }));
       continue;
     }
 
@@ -380,7 +381,7 @@ export function extractTgReplyDirective(input: string): ReplyDirectiveExtraction
       const attrs = parseTagAttributes(m[1] ?? "");
       directive = buildReplyDirective(attrs, m[2] ?? "", warnings);
     } else {
-      warnings.push("检测到多个 tg-reply 标签，仅使用第一个");
+      warnings.push(t("检测到多个 tg-reply 标签，仅使用第一个"));
     }
   }
 
@@ -402,13 +403,13 @@ export function resolveReplyParameters(
 
   const list = histories.get(scope) ?? [];
   if (!list.length) {
-    warnings.push("回复工具未找到可引用的历史消息");
+    warnings.push(t("回复工具未找到可引用的历史消息"));
     return { warnings };
   }
 
   const target = selectTarget(list, directive);
   if (!target) {
-    warnings.push("回复工具未匹配到目标消息，已退化为普通回复");
+    warnings.push(t("回复工具未匹配到目标消息，已退化为普通回复"));
     return { warnings };
   }
 
@@ -425,7 +426,7 @@ export function resolveReplyParameters(
       params.quote = quote;
       params.quote_position = pos;
     } else {
-      warnings.push("回复工具未匹配到 quote 片段，已仅按消息回复");
+      warnings.push(t("回复工具未匹配到 quote 片段，已仅按消息回复"));
     }
   }
 
@@ -477,7 +478,7 @@ function buildReplyDirective(
   }
 
   if (!contains && !quote) {
-    warnings.push("tg-reply 缺少定位信息（message_id 或 contains/quote）");
+    warnings.push(t("tg-reply 缺少定位信息（message_id 或 contains/quote）"));
     return undefined;
   }
 
@@ -536,7 +537,7 @@ export function extractTgCronDirectives(input: string): CronDirectiveExtraction 
     last = CRON_TAG_RE.lastIndex;
 
     if (directives.length >= 8) {
-      warnings.push("tg-cron 指令过多，仅处理前 8 条");
+      warnings.push(t("tg-cron 指令过多，仅处理前 8 条"));
       continue;
     }
 
@@ -564,7 +565,7 @@ function buildCronDirective(
   const actionRaw = attrs.action || attrs.op || attrs.cmd || attrs.type || "";
   const action = normalizeAction(actionRaw);
   if (!action) {
-    warnings.push(`tg-cron 缺少或不支持 action: ${actionRaw || "(empty)"}`);
+    warnings.push(t("tg-cron 缺少或不支持 action: {action}", { action: actionRaw || "(empty)" }));
     return undefined;
   }
 
@@ -575,7 +576,7 @@ function buildCronDirective(
   const id = String(attrs.id || attrs.job_id || attrs.jobid || "").trim();
   if (action === "on" || action === "off" || action === "del" || action === "run") {
     if (!id) {
-      warnings.push(`tg-cron action=${action} 缺少 id`);
+      warnings.push(t("tg-cron action={action} 缺少 id", { action }));
       return undefined;
     }
     return { action, id };
@@ -583,13 +584,13 @@ function buildCronDirective(
 
   if (action === "rename") {
     if (!id) {
-      warnings.push("tg-cron action=rename 缺少 id");
+      warnings.push(t("tg-cron action=rename 缺少 id"));
       return undefined;
     }
 
     const name = String(attrs.name || attrs.title || body || "").trim();
     if (!name) {
-      warnings.push("tg-cron action=rename 缺少 name/title 或标签体内容");
+      warnings.push(t("tg-cron action=rename 缺少 name/title 或标签体内容"));
       return undefined;
     }
 
@@ -599,13 +600,13 @@ function buildCronDirective(
   const kindRaw = attrs.kind || attrs.schedule || "";
   const kind = normalizeKind(kindRaw);
   if (!kind) {
-    warnings.push(`tg-cron add 缺少或不支持 kind: ${kindRaw || "(empty)"}`);
+    warnings.push(t("tg-cron add 缺少或不支持 kind: {kind}", { kind: kindRaw || "(empty)" }));
     return undefined;
   }
 
   const prompt = String(attrs.prompt || attrs.message || attrs.task || body || "").trim();
   if (!prompt) {
-    warnings.push("tg-cron add 缺少 prompt/message/task 或标签体内容");
+    warnings.push(t("tg-cron add 缺少 prompt/message/task 或标签体内容"));
     return undefined;
   }
 
@@ -616,17 +617,17 @@ function buildCronDirective(
   const timezone = String(attrs.timezone || attrs.tz || "").trim() || undefined;
 
   if (kind === "at" && !at) {
-    warnings.push("tg-cron add kind=at 缺少 at 时间");
+    warnings.push(t("tg-cron add kind=at 缺少 at 时间"));
     return undefined;
   }
 
   if (kind === "every" && !every) {
-    warnings.push("tg-cron add kind=every 缺少 every 间隔");
+    warnings.push(t("tg-cron add kind=every 缺少 every 间隔"));
     return undefined;
   }
 
   if (kind === "cron" && !expr) {
-    warnings.push("tg-cron add kind=cron 缺少 expr 表达式");
+    warnings.push(t("tg-cron add kind=cron 缺少 expr 表达式"));
     return undefined;
   }
 

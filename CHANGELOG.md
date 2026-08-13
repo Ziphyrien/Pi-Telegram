@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- English interface support (i18n). Add `"language": "en"` to `settings.json` to force English, or leave it unset to auto-detect from `LC_ALL` / `LC_MESSAGES` / `LANG` / `LANGUAGE`, then the OS locale exposed by `Intl` (including Windows). Chinese locales keep the original Chinese interface; everything else defaults to English. Named interpolation keeps dynamic messages grammatically complete, and all UI strings, console logs, and the AI tool protocol prompt (`tool-system-prompt.txt`) are translated.
+
 ## [0.4.0] - 2026-08-09
 
 ### Added

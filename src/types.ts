@@ -20,6 +20,8 @@ export interface AppConfig {
   bots: BotConfig[];
   idleTimeoutMs: number;
   maxResponseLength: number;
+  /** Interface language: "zh" | "en". Omitted/undefined -> auto-detect from system locale. */
+  language?: "zh" | "en";
   lastChangelogVersion?: string;
   cron?: CronConfig;
 }

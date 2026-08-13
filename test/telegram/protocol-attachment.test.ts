@@ -1,12 +1,15 @@
-import { describe, test } from "bun:test";
+import { afterEach, describe, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InputFile } from "grammy";
+import { setLanguage } from "../../src/i18n.js";
 import { extractTgAttachments } from "../../src/telegram/protocol.js";
 
 // @covers telegram/protocol.ts
+
+afterEach(() => setLanguage("zh"));
 
 describe("tg-attachment directives", () => {
   test("extracts file_id attachments and infers kind from explicit type", () => {
@@ -60,6 +63,13 @@ describe("tg-attachment directives", () => {
     assert.equal(result.attachments[0].label, "note.txt");
     assert.match(result.warnings.join("\n"), /URL 非法/);
     assert.match(result.warnings.join("\n"), /本地路径不存在/);
+  });
+
+  test("formats attachment errors in English with interpolated labels", () => {
+    setLanguage("en");
+    const result = extractTgAttachments('<tg-attachment url="ftp://example.test/a.txt" filename="a.txt" />');
+
+    assert.deepEqual(result.warnings, ["Attachment a.txt has an invalid URL"]);
   });
 
   test("decodes base64 uploads and warns on empty payload", () => {

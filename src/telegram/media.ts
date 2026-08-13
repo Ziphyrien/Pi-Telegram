@@ -8,6 +8,7 @@ import type { HydrateFlavor } from "@grammyjs/hydrate";
 import type { AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import type { PiImage } from "../types.js";
 import { rememberReplyMessage } from "./protocol.js";
+import { t } from "../i18n.js";
 
 type BotContext = HydrateFlavor<Context> & AutoChatActionFlavor;
 
@@ -340,7 +341,7 @@ export function buildUserMessageWithReplyContext(
   if (!hasContext) return content;
 
   const contextLines = [
-    "[回复上下文开始]",
+    t("[回复上下文开始]"),
     targetSender ? `reply_to_sender: ${targetSender}` : "",
     targetText ? `reply_to_text: ${truncate(targetText, 1200)}` : "",
     quote ? `user_selected_quote: ${truncate(quote, 500)}` : "",
@@ -348,11 +349,11 @@ export function buildUserMessageWithReplyContext(
     currentImagePaths.length ? `current_image_paths:\n- ${currentImagePaths.join("\n- ")}` : "",
     currentFilePaths.length ? `current_file_paths:\n- ${currentFilePaths.join("\n- ")}` : "",
     referencedImagePaths.length || currentImagePaths.length
-      ? "附图顺序：先 current_images（如果有），再 reply_to_images。"
+      ? t("附图顺序：先 current_images（如果有），再 reply_to_images。")
       : "",
-    "[回复上下文结束]",
+    t("[回复上下文结束]"),
   ].filter(Boolean);
-  return [...contextLines, "", "[用户真实请求]", content].join("\n");
+  return [...contextLines, "", t("[用户真实请求]"), content].join("\n");
 }
 
 async function collectReferencedImages(
