@@ -1,4 +1,4 @@
-import { describe, test } from "bun:test";
+import { describe, mock, test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,22 +6,12 @@ import { join, resolve } from "node:path";
 
 // @covers settings.ts
 
-const previousHome = process.env.HOME;
-const previousUserProfile = process.env.USERPROFILE;
 const home = mkdtempSync(join(tmpdir(), "pitg-config-home-"));
-process.env.HOME = home;
-process.env.USERPROFILE = home;
+const realOs = await import("node:os");
+mock.module("node:os", () => ({ ...realOs, homedir: () => home }));
 
 const paths = await import("../../src/settings.js");
 const config = await import("../../src/settings.js");
-
-process.on("exit", () => {
-  if (previousHome === undefined) delete process.env.HOME;
-  else process.env.HOME = previousHome;
-
-  if (previousUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = previousUserProfile;
-});
 
 describe("settings file I/O", () => {
   test("creates a settings file only when it is missing", () => {
