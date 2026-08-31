@@ -103,7 +103,7 @@
 
     "@grammyjs/hydrate": ["@grammyjs/hydrate@1.7.0", "", { "dependencies": { "abort-controller": "^3.0.0" }, "peerDependencies": { "grammy": "^1.38.0" } }, "sha512-X8uUlyEaddMdiFpbrW9JY0adme1GaM/PLb+bgVMS08hjDtgUiGGydIjltj/auVVKiG6zJAZSG3Z/RbBjBRnxhQ=="],
 
-    "@grammyjs/menu": ["@grammyjs/menu@1.4.0", "", { "peerDependencies": { "grammy": "^1.40.0" } }, "sha512-Q9TO9n536TwSgRpr/n73v1fJFaZ5d8cqYse2VEmepoIMwqfavXjLMjaCW/JetwzQhSv8gaaMtGsWhbktClaSUQ=="],
+    "@grammyjs/menu": ["@grammyjs/menu@1.5.0", "", { "peerDependencies": { "grammy": "^1.46.0" } }, "sha512-Bkizco3DmNcnfhPOBct+zy9EhP3HO8qQ4GQ+QERDdbKvlYxh7/kVIWczO739FeMU+RWhy4XL61n44Oy5ekJhGw=="],
 
     "@grammyjs/runner": ["@grammyjs/runner@2.0.3", "", { "dependencies": { "abort-controller": "^3.0.0" }, "peerDependencies": { "grammy": "^1.13.1" } }, "sha512-nckmTs1dPWfVQteK9cxqxzE+0m1VRvluLWB8UgFzsjg62w3qthPJt0TYtJBEdG7OedvfQq4vnFAyE6iaMkR42A=="],
 
